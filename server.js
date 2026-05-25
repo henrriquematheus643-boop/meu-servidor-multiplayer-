@@ -1,34 +1,91 @@
-// Servidor de suporte Multiplayer para Godot 4 (WebSockets)
+// === MEU SERVIDOR MULTIPLAYER (server.js) ===
 const WebSocket = require('ws');
 
-// O Render define a porta automaticamente através do 'process.env.PORT'
-// Se não encontrar, ele usa a porta 8080 como padrão
+// O Render define a porta automaticamente. Se for local, usa a 8080.
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log(`Servidor de suporte multiplayer rodando na porta ${PORT}...`);
+// Banco de dados temporário em memória (no futuro podemos salvar em arquivo)
+const usuariosCadastrados = {}; 
+let proximoPlayerId = 1000; // Os IDs do Reduto RP vão começar em 1000
 
-// Lista para guardar todos os jogadores que estão conectados na sala
-const clientes = new Set();
+console.log(`[Jarvis] Servidor do Reduto RP iniciado na porta ${PORT}`);
 
 wss.on('connection', (ws) => {
-    // Adiciona o novo jogador que acabou de entrar na lista
-    clientes.add(ws);
-    console.log(`Novo jogador conectado! Total de players: ${clientes.size}`);
+    console.log("[Servidor] Um novo cidadão tentou conectar a rede.");
 
-    // Fica ouvindo as mensagens que o Godot envia (posição, rotação, animação)
     ws.on('message', (message) => {
-        // Pega os dados desse player e envia para todos os OUTROS jogadores da sala
-        for (let cliente of clientes) {
-            if (cliente !== ws && cliente.readyState === WebSocket.OPEN) {
-                cliente.send(message);
+        try {
+            // Transforma a mensagem do Godot em um objeto JavaScript
+            const dados = JSON.parse(message);
+            
+            // --- 1. SISTEMA DE REGISTRO ONLINE ---
+            if (dados.action === "register") {
+                const { username, password } = dados;
+                console.log(`[Registro] Tentativa de criar conta para: ${username}`);
+
+                if (!username || !password) {
+                    ws.send(JSON.stringify({ success: false, message: "Usuário ou senha vazios!" }));
+                    return;
+                }
+
+                // Verifica se o usuário já existe no "banco de dados"
+                if (usuariosCadastrados[username]) {
+                    ws.send(JSON.stringify({ success: false, message: "Esse cidadão já está cadastrado!" }));
+                } else {
+                    // Salva o usuário e a senha
+                    usuariosCadastrados[username] = {
+                        password: password,
+                        id: proximoPlayerId++
+                    };
+                    console.log(`[Sucesso] Conta criada: ${username} | ID: ${usuariosCadastrados[username].id}`);
+                    
+                    // RESPONDE AO GODOT (Isso destrava o seu botão de registrar!)
+                    ws.send(JSON.stringify({ 
+                        success: true, 
+                        message: "Conta criada com sucesso!" 
+                    }));
+                }
+                return; // Para o código aqui e não mistura com o multiplayer
             }
+
+            // --- 2. SISTEMA DE LOGIN ONLINE ---
+            if (dados.action === "login") {
+                const { username, password } = dados;
+                console.log(`[Login] Tentativa de entrada para: ${username}`);
+
+                const conta = usuariosCadastrados[username];
+
+                if (conta && conta.password === password) {
+                    console.log(`[Sucesso] Cidadão logado: ${username}`);
+                    
+                    // RESPONDE AO GODOT COM O ID DO PERSONAGEM
+                    ws.send(JSON.stringify({ 
+                        success: true, 
+                        message: "Bem-vindo ao Reduto RP!",
+                        player_id: String(conta.id)
+                    }));
+                } else {
+                    ws.send(JSON.stringify({ success: false, message: "Usuário ou senha incorretos!" }));
+                }
+                return;
+            }
+
+            // --- 3. SISTEMA DE MULTIPLAYER (MOVIMENTAÇÃO) ---
+            // Se não for login/registro, o servidor trata como movimentação dos bonecos no mapa
+            wss.clients.forEach((client) => {
+                if (client !== ws && client.readyState === WebSocket.OPEN) {
+                    // Repassa a posição do boneco para os outros jogadores na sessão
+                    client.send(message); 
+                }
+            });
+
+        } catch (erro) {
+            console.log("[Erro] Mensagem recebida em formato inválido:", erro);
         }
     });
 
-    // Se o jogador fechar o jogo ou perder a internet, remove ele da lista
     ws.on('close', () => {
-        clientes.delete(ws);
-        console.log(`Um jogador saiu. Restam: ${clientes.size}`);
+        console.log("[Servidor] Um cidadão desconectou da cidade.");
     });
 });
