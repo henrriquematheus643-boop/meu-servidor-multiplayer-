@@ -6,7 +6,7 @@ const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
 const GITHUB_FILE_PATH = "usuarios.json"; // Arquivo onde as contas e posições serão escritas
 
 // COLOQUE SEU TOKEN AQUI: Lembre-se de gerar o Token (classic) com permissão 'repo' e colar aqui
-const GITHUB_TOKEN = "COLE_AQUI_O_SEU_TOKEN_DO_GITHUB"; 
+const GITHUB_TOKEN = "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"; 
 
 let usuariosCadastrados = {};
 let shaArquivo = "";
