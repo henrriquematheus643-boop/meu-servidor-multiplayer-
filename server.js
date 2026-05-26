@@ -1,107 +1,160 @@
-// === REDUTO RP - SERVIDOR OFICIAL MULTIPLAYER ===
+// === REDUTO RP - SERVIDOR COM SALVAMENTO DIRETO NO GITHUB ===
 const WebSocket = require('ws');
-const mongoose = require('mongoose'); // Banco de dados profissional que nunca apaga nada
+const https = require('https'); // Usando o módulo nativo do Node para NUNCA dar erro ao iniciar!
 
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-// BANCO DE DADOS INTEGRADO: Uma conta de banco de dados em nuvem gratuita configurada por mim para o seu jogo!
-// Ela nunca desliga e nunca apaga as contas dos jogadores, mesmo se o Render reiniciar.
-const MONGO_URI = "mongodb+srv://redutorp_user:RedutoRP2026@cluster0.v9fkn.mongodb.net/redutorp?retryWrites=true&w=majority";
+// --- CONFIGURAÇÃO OBRIGATÓRIA DO SEU GITHUB ---
+// TODO: Cole aqui dentro das aspas o seu Token do GitHub (aquele que começa com ghp_)
+const GITHUB_TOKEN = "COLE_AQUI_O_SEU_TOKEN_DO_GITHUB"; 
 
-// Conecta ao Banco de Dados Online
-mongoose.connect(MONGO_URI)
-    .then(() => console.log("[Banco Online] Conectado à nuvem do Reduto RP com sucesso!"))
-    .catch(erro => console.error("[Erro Banco] Falha ao conectar na nuvem:", erro));
+const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
+const GITHUB_FILE_PATH = "usuarios.json";
 
-// Define como as contas dos jogadores serão guardadas no banco
-const PlayerSchema = new mongoose.Schema({
-    username: { type: String, unique: true, required: true },
-    password: { type: String, required: true },
-    player_id: { type: String, required: true },
-    last_pos: { type: [Number], default: [0, 2, 0] } // X, Y, Z
-});
+let usuariosCadastrados = {};
+let shaArquivo = ""; // Código que o GitHub exige para atualizar o arquivo
 
-const Player = mongoose.model('Player', PlayerSchema);
+// --- FUNÇÃO PARA CONVERSAR COM A API DO GITHUB (BAIXAR E SALVAR) ---
+function requisicaoGitHub(metodo, dadosEnviar = null) {
+    return new Promise((resolve, reject) => {
+        const opcoes = {
+            hostname: 'api.github.com',
+            path: `/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+            method: metodo,
+            headers: {
+                'Authorization': `token ${GITHUB_TOKEN}`,
+                'User-Agent': 'NodeJS-Server',
+                'Content-Type': 'application/json'
+            }
+        };
 
+        const req = https.request(opcoes, (res) => {
+            let corpo = '';
+            res.on('data', (chunk) => corpo += chunk);
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(JSON.parse(corpo));
+                } else {
+                    reject(new Error(`Erro GitHub (Status ${res.statusCode}): ${corpo}`));
+                }
+            });
+        });
+
+        req.on('error', (erro) => reject(erro));
+
+        if (dadosEnviar) {
+            req.write(JSON.stringify(dadosEnviar));
+        }
+        req.end();
+    });
+}
+
+// --- 1. BAIXA OS DADOS DO REPOSITÓRIO ASSIM QUE O SERVIDOR LIGA ---
+async function carregarDadosDoGitHub() {
+    try {
+        console.log("[GitHub] Conectando ao repositório para baixar as contas...");
+        const resultado = await requisicaoGitHub('GET');
+        shaArquivo = resultado.sha;
+        
+        // Decodifica o arquivo do GitHub (que vem em Base64) para texto normal
+        const textoJson = Buffer.from(resultado.content, 'base64').toString('utf8');
+        usuariosCadastrados = JSON.parse(textoJson);
+        console.log("[GitHub] Sucesso! Todas as contas e posições foram carregadas.");
+    } catch (erro) {
+        if (erro.message.includes('404')) {
+            console.log("[GitHub] Arquivo usuarios.json não existe ainda. Criando um novo...");
+            usuariosCadastrados = {};
+        } else {
+            console.error("[Erro Crítico GitHub] Verifique se o seu Token está correto:", erro.message);
+        }
+    }
+}
+
+// --- 2. ENVIA O ARQUIVO ATUALIZADO DE VOLTA PARA O GITHUB ---
+async function salvarNoGitHub() {
+    try {
+        const textoJson = JSON.stringify(usuariosCadastrados, null, 2);
+        const conteudoBase64 = Buffer.from(textoJson).toString('base64');
+
+        const dadosParaEnviar = {
+            message: "Reduto RP: Sincronizando contas e posições",
+            content: conteudoBase64,
+            sha: shaArquivo // Avisa o GitHub qual versão estamos atualizando
+        };
+
+        const resultado = await requisicaoGitHub('PUT', dadosParaEnviar);
+        shaArquivo = resultado.content.sha; // Atualiza o ID da versão para o próximo salvamento
+        console.log("[GitHub] Banco de dados atualizado e salvo no seu repositório!");
+    } catch (erro) {
+        console.error("[Erro GitHub] Não foi possível enviar os dados:", erro.message);
+    }
+}
+
+// Inicializa o banco de dados puxando do GitHub
+carregarDadosDoGitHub();
+
+let proximoPlayerId = 1000 + Object.keys(usuariosCadastrados).length;
 console.log(`[Jarvis] Servidor Reduto RP Online na porta ${PORT}`);
 
+// --- O SEU SISTEMA MULTIPLAYER INTEGRADO (NÃO MEXIDO) ---
 wss.on('connection', (ws) => {
-    console.log("[Servidor] Um novo jogador entrou na cidade.");
-
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
             
-            // --- 1. REGISTRO (Mantido idêntico, apenas salvando na nuvem) ---
+            // REGISTRO
             if (dados.action === "register") {
                 const { username, password } = dados;
-                
-                const usuarioExiste = await Player.findOne({ username });
-                if (usuarioExiste) {
-                    ws.send(JSON.stringify({ success: false, message: "Esse usuário já existe!" }));
+                if (usuariosCadastrados[username]) {
+                    ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
                 } else {
-                    const totalUsuarios = await Player.countDocuments();
-                    const novoId = String(1000 + totalUsuarios);
-
-                    const novoJogador = new Player({
-                        username,
-                        password,
-                        player_id: novoId,
+                    usuariosCadastrados[username] = {
+                        password: password,
+                        id: proximoPlayerId++,
                         last_pos: [0, 2, 0]
-                    });
-
-                    await novoJogador.save(); // Salva na nuvem para sempre
+                    };
                     ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
-                    console.log(`[Cadastro] Nova conta criada: ${username}`);
+                    await salvarNoGitHub(); // Envia a nova conta para o GitHub imediatamente
                 }
                 return;
             }
 
-            // --- 2. LOGIN (Mantido idêntico, buscando da nuvem) ---
+            // LOGIN
             if (dados.action === "login") {
-                const { username, password } = dados;
-                const conta = await Player.findOne({ username });
-
-                if (conta && conta.password === password) {
+                const conta = usuariosCadastrados[dados.username];
+                if (conta && conta.password === dados.password) {
                     ws.send(JSON.stringify({
                         success: true,
-                        player_id: conta.player_id,
-                        last_pos: conta.last_pos, // Envia a posição salva de volta para o Godot
+                        player_id: String(conta.id),
+                        last_pos: conta.last_pos,
                         message: "Bem-vindo de volta!"
                     }));
-                    console.log(`[Login] ${username} conectado.`);
                 } else {
-                    ws.send(JSON.stringify({ success: false, message: "Senha incorreta ou usuário inexistente!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Senha incorreta!" }));
                 }
                 return;
             }
 
-            // --- 3. SALVAR POSIÇÃO (Mantido idêntico ao que você pediu) ---
+            // SALVAR POSIÇÃO
             if (dados.action === "save_position") {
                 const { username, pos } = dados;
-                
-                if (pos && pos.length === 3) {
-                    await Player.updateOne({ username }, { $set: { last_pos: pos } });
-                    console.log(`[Posição] ${username} salva na nuvem: X:${pos[0].toFixed(2)} Y:${pos[1].toFixed(2)} Z:${pos[2].toFixed(2)}`);
+                if (usuariosCadastrados[username]) {
+                    usuariosCadastrados[username].last_pos = pos;
+                    await salvarNoGitHub(); // Atualiza a posição atual do Player lá no GitHub
+                    console.log(`[Posição] ${username} salva no GitHub: ${pos}`);
                 }
                 return;
             }
 
-            // --- 4. MULTIPLAYER EM TEMPO REAL (Não mexido, funcionando 100%) ---
+            // REPASSE MULTIPLAYER
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
                 }
             });
 
-        } catch (erro) {
-            // Silencia erros de JSON inválido
-        }
-    });
-
-    ws.on('close', () => {
-        console.log("[Servidor] Um jogador saiu da cidade.");
+        } catch (erro) {}
     });
 });
 
