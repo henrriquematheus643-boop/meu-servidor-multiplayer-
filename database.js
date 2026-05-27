@@ -19,7 +19,7 @@ async function conectarBanco() {
 }
 conectarBanco();
 
-// Carrega todas as contas cadastradas para o login instantâneo
+// Busca TODAS as contas do banco e organiza em um objeto para o servidor ler fácil
 async function carregarListaUsuarios() {
     try {
         if (!contas) return {};
@@ -34,23 +34,19 @@ async function carregarListaUsuarios() {
     }
 }
 
-// Salva e altera os dados da conta de cima para baixo
-async function salvarListaUsuarios(lista) {
+// Salva UM único usuário por vez de forma organizada e segura
+async function salvarNovoUsuario(nome, senha, id) {
     try {
-        const nomes = Object.keys(lista);
-        const ultimoNome = nomes[nomes.length - 1];
-        const usuario = lista[ultimoNome];
-
-        if (!usuario) return true;
-
-        await contas.updateOne(
-            { nome: ultimoNome },
-            { $set: { nome: usuario.nome, senha: usuario.senha, id: usuario.id } },
+        if (!contas) return null;
+        // O upsert garante que ele salve na vaga certa do player
+        const res = await contas.updateOne(
+            { nome: nome },
+            { $set: { nome: nome, senha: senha, id: id } },
             { upsert: true }
         );
         return true;
     } catch (e) {
-        console.error("[Jarvis Banco Erro] Erro ao salvar usuário:", e.message);
+        console.error("[Jarvis Banco Erro] Erro ao salvar usuario:", e.message);
         return null;
     }
 }
@@ -69,4 +65,4 @@ async function salvarPosicaoPlayer(nome, posicao) {
     }
 }
 
-module.exports = { carregarListaUsuarios, salvarListaUsuarios, salvarPosicaoPlayer };
+module.exports = { carregarListaUsuarios, salvarNovoUsuario, salvarPosicaoPlayer };
