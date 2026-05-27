@@ -7,9 +7,8 @@ const wss = new WebSocket.Server({ port: PORT });
 let usuarios = {}; 
 
 async function iniciar() {
-    console.log("[Jarvis] Carregando pastas de players do GitHub...");
     usuarios = await banco.carregarTodosOsPlayers();
-    console.log(`[Jarvis] ${Object.keys(usuarios).length} players carregados. Pronto para o Reduto RP!`);
+    console.log(`[Jarvis] Pronto! ${Object.keys(usuarios).length} pastas de players prontas.`);
 }
 iniciar();
 
@@ -21,23 +20,26 @@ wss.on('connection', (ws) => {
             // REGISTRO
             if (dados.action === "register") {
                 if (usuarios[dados.username]) {
-                    return ws.send(JSON.stringify({ success: false, message: "Pasta já existe!" }));
+                    return ws.send(JSON.stringify({ success: false, message: "Esta pasta já existe!" }));
                 }
-                const novo = {
+                
+                // Primeiro guarda no servidor para o login funcionar na hora
+                usuarios[dados.username] = {
                     senha: dados.password,
                     posicao: [0, 2, 0],
                     id: 1000 + Object.keys(usuarios).length
                 };
-                usuarios[dados.username] = novo;
-                ws.send(JSON.stringify({ success: true, message: "Conta e Pasta criadas!" }));
+
+                // Avisa o jogo que deu certo
+                ws.send(JSON.stringify({ success: true, message: "Pasta criada! Pode logar." }));
                 
-                // Salva no GitHub em segundo plano (não trava o player)
-                const novoSha = await banco.salvarPlayer(dados.username, novo);
-                usuarios[dados.username]._sha = novoSha;
+                // Agora envia para o GitHub em segundo plano
+                const novoSha = await banco.salvarPlayer(dados.username, usuarios[dados.username]);
+                if (novoSha) usuarios[dados.username]._sha = novoSha;
                 return;
             }
 
-            // LOGIN (Agora é instantâneo)
+            // LOGIN
             if (dados.action === "login") {
                 const conta = usuarios[dados.username];
                 if (conta && conta.senha === dados.password) {
@@ -45,10 +47,10 @@ wss.on('connection', (ws) => {
                         success: true,
                         player_id: String(conta.id),
                         last_pos: conta.posicao,
-                        message: "Login realizado com sucesso!"
+                        message: "Entrando na sua pasta..."
                     }));
                 } else {
-                    ws.send(JSON.stringify({ success: false, message: "Dados incorretos!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Senha ou Pasta não encontrada!" }));
                 }
                 return;
             }
