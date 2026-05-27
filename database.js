@@ -1,65 +1,48 @@
 const { MongoClient } = require('mongodb');
 
-// Endereço oficial da nuvem do Reduto RP
+// Link permanente do MongoDB do Reduto RP
 const uri = "mongodb+srv://redutorp:rp123@cluster0.v8k3m.mongodb.net/?retryWrites=true&w=majority";
 const client = new MongoClient(uri);
+let db, colecao;
 
-let db = null;
-let contas = null;
-
-// Função que liga o servidor à nuvem
-async function conectarBanco() {
+async function conectar() {
     try {
         await client.connect();
         db = client.db("reduto_rp");
-        contas = db.collection("usuarios_permanentes");
-        console.log("[Jarvis Nuvem] CONECTADO COM SUCESSO! O banco está pronto.");
+        colecao = db.collection("servidor_dados");
+        console.log("[MongoDB Nuvem] Banco de dados conectado com sucesso!");
     } catch (e) {
-        console.error("[Jarvis Nuvem Erro] Falha crítica ao conectar na nuvem:", e.message);
+        console.error("[MongoDB Nuvem Erro] Falha na conexão:", e.message);
     }
 }
-// Executa a conexão assim que o script é puxado
-conectarBanco();
+conectar();
 
-// Busca um usuário na nuvem de forma segura
-async function buscarUsuario(nome) {
+// Puxa todas as contas salvas para entregar ao servidor quando ele ligar
+async function carregarTodosOsUsuarios() {
     try {
-        // Se a nuvem ainda estiver conectando, espera 1 segundo e tenta de novo
-        if (!contas) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!colecao) return {};
+        const documento = await colecao.findOne({ tipo: "backup_contas" });
+        if (documento && documento.dados) {
+            return documento.dados;
         }
-        if (!contas) return null;
-        return await contas.findOne({ username: String(nome).trim() });
+        return {};
     } catch (e) {
-        return null;
+        return {};
     }
 }
 
-// Salva a conta na nuvem (Formato permanente)
-async function salvarUsuario(dados) {
+// Salva e atualiza a lista inteira de forma sólida
+async function salvarListaCompleta(lista) {
     try {
-        if (!contas) return;
-        await contas.updateOne(
-            { username: dados.username }, 
-            { $set: dados }, 
+        if (!colecao) return;
+        await colecao.updateOne(
+            { tipo: "backup_contas" },
+            { $set: { tipo: "backup_contas", dados: lista } },
             { upsert: true }
         );
-        console.log(`[Jarvis Nuvem] Dados de ${dados.username} sincronizados na nuvem.`);
     } catch (e) {
-        console.error("[Jarvis Nuvem Erro] Erro ao salvar conta:", e.message);
+        console.error("[MongoDB Nuvem Erro] Erro ao sincronizar dados.");
     }
 }
 
-// Salva e altera a localização do jogador a todo momento
-async function atualizarPosicao(nome, posicao) {
-    try {
-        if (!contas) return;
-        await contas.updateOne(
-            { username: nome }, 
-            { $set: { last_pos: posicao } },
-            { upsert: true }
-        );
-    } catch (e) {}
-}
-
-module.exports = { buscarUsuario, salvarUsuario, atualizarPosicao };
+module.exports = { carregarTodosOsUsuarios, salvarListaCompleta };
