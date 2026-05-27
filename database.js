@@ -1,90 +1,71 @@
-const https = require('https');
+const { MongoClient } = require('mongodb');
 
-// --- CONFIGURAÇÕES DO REPOSITÓRIO ---
-// Verifique se o nome do seu repositório termina com o traço "-" no GitHub. Se não terminar, apague o traço da linha abaixo!
-const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
-const GITHUB_TOKEN = "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"; 
+// Banco de dados na nuvem configurado para o Reduto RP
+const uri = "mongodb+srv://redutorp:rp123@cluster0.v8k3m.mongodb.net/?retryWrites=true&w=majority";
+const client = new MongoClient(uri);
 
-function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
-    return new Promise((resolve, reject) => {
-        const opcoes = {
-            hostname: 'api.github.com',
-            path: `/repos/${GITHUB_REPO}/contents/${caminho}`,
-            method: metodo,
-            headers: {
-                'Authorization': `token ${GITHUB_TOKEN}`,
-                'User-Agent': 'NodeJS-Server',
-                'Content-Type': 'application/json'
-            }
-        };
+let db, contas, posicoes;
 
-        const req = https.request(opcoes, (res) => {
-            let corpo = '';
-            res.on('data', (chunk) => corpo += chunk);
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) resolve(JSON.parse(corpo));
-                else reject(new Error(res.statusCode));
-            });
-        });
-        req.on('error', (e) => reject(e));
-        if (dadosEnviar) req.write(JSON.stringify(dadosEnviar));
-        req.end();
-    });
+async function conectarBanco() {
+    try {
+        await client.connect();
+        db = client.db("reduto_rp");
+        contas = db.collection("contas");
+        posicoes = db.collection("posicoes");
+        console.log("[Jarvis Banco] Conectado ao banco de dados em nuvem com sucesso!");
+    } catch (e) {
+        console.error("[Jarvis Banco Erro] Falha ao conectar:", e.message);
+    }
 }
+conectarBanco();
 
+// Carrega todas as contas cadastradas para o login instantâneo
 async function carregarListaUsuarios() {
     try {
-        const resultado = await requisicaoGitHub('GET', 'usuarios.json');
-        const textoJson = Buffer.from(resultado.content, 'base64').toString('utf8');
-        const dados = JSON.parse(textoJson);
-        dados._sha = resultado.sha; 
-        return dados;
+        if (!contas) return {};
+        const lista = await contas.find({}).toArray();
+        let resultado = {};
+        lista.forEach(user => {
+            resultado[user.nome] = { nome: user.nome, senha: user.senha, id: user.id };
+        });
+        return resultado;
     } catch (e) {
-        return { _sha: null }; 
+        return {};
     }
 }
 
+// Salva e altera os dados da conta de cima para baixo
 async function salvarListaUsuarios(lista) {
     try {
-        let shaAtual = lista._sha;
-        try {6
-            const check = await requisicaoGitHub('GET', 'usuarios.json');
-            shaAtual = check.sha;
-        } catch(e){}
+        const nomes = Object.keys(lista);
+        const ultimoNome = nomes[nomes.length - 1];
+        const usuario = lista[ultimoNome];
 
-        const dadosSalvar = { ...lista };
-        delete dadosSalvar._sha;
+        if (!usuario) return true;
 
-        const conteudo = Buffer.from(JSON.stringify(dadosSalvar, null, 2)).toString('base64');
-        const corpo = { message: "Sincronizando usuarios.json", content: conteudo };
-        if (shaAtual) corpo.sha = shaAtual;
-
-        const res = await requisicaoGitHub('PUT', 'usuarios.json', corpo);
-        return res.content.sha;
+        await contas.updateOne(
+            { nome: ultimoNome },
+            { $set: { nome: usuario.nome, senha: usuario.senha, id: usuario.id } },
+            { upsert: true }
+        );
+        return true;
     } catch (e) {
-        console.error("[Erro] Falha ao salvar no usuarios.json");
+        console.error("[Jarvis Banco Erro] Erro ao salvar usuário:", e.message);
         return null;
     }
 }
 
+// Salva e altera a localização do jogador dinamicamente
 async function salvarPosicaoPlayer(nome, posicao) {
     try {
-        const caminho = `players/${nome}/dados.json`;
-        let shaExistente = null;
-
-        try {
-            const info = await requisicaoGitHub('GET', caminho);
-            shaExistente = info.sha;
-        } catch (e) {}
-
-        const dadosPosicao = { nome: nome, posicao: posicao };
-        const conteudo = Buffer.from(JSON.stringify(dadosPosicao, null, 2)).toString('base64');
-        const corpo = { message: `Localizacao de ${nome}`, content: conteudo };
-        if (shaExistente) corpo.sha = shaExistente;
-
-        await requisicaoGitHub('PUT', caminho, corpo);
+        if (!posicoes) return;
+        await posicoes.updateOne(
+            { nome: nome },
+            { $set: { nome: nome, posicao: posicao } },
+            { upsert: true }
+        );
     } catch (e) {
-        console.error(`[Erro] Falha ao criar pasta de posicao para ${nome}`);
+        console.error("[Jarvis Banco Erro] Erro ao alterar posicao de " + nome);
     }
 }
 
