@@ -1,12 +1,9 @@
 {
-  "name": "servidor-multiplayer",
+  "name": "meu-servidor-multiplayer",
   "version": "1.0.0",
-  "description": "Servidor de suporte para Godot",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.13.0",
+    "mongodb": "^6.3.0"
   }
 }
