@@ -1,5 +1,6 @@
 const https = require('https');
 
+// --- CONFIGURAÇÕES DO REPOSITÓRIO ---
 const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
 const GITHUB_TOKEN = "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"; 
 
@@ -20,8 +21,11 @@ function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
             let corpo = '';
             res.on('data', (chunk) => corpo += chunk);
             res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) resolve(JSON.parse(corpo));
-                else reject(new Error(res.statusCode));
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(JSON.parse(corpo));
+                } else {
+                    reject(new Error(`Status ${res.statusCode}: ${corpo}`));
+                }
             });
         });
         req.on('error', (e) => reject(e));
@@ -30,20 +34,21 @@ function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
     });
 }
 
-// Carrega a lista geral de usuários do arquivo usuarios.json
+// Carrega os usuarios do arquivo usuarios.json
 async function carregarListaUsuarios() {
     try {
         const resultado = await requisicaoGitHub('GET', 'usuarios.json');
         const textoJson = Buffer.from(resultado.content, 'base64').toString('utf8');
         const dados = JSON.parse(textoJson);
-        dados._sha = resultado.sha; // Guarda o SHA para atualizar depois
+        dados._sha = resultado.sha; 
         return dados;
     } catch (e) {
-        return { _sha: null }; // Se não existir, começa do zero
+        console.log("[Banco] Criando estrutura inicial vazia...");
+        return { _sha: null }; 
     }
 }
 
-// Salva a lista geral de usuários no usuarios.json (Nome, Senha e ID)
+// Salva a lista geral no usuarios.json
 async function salvarListaUsuarios(lista) {
     try {
         const dadosSalvar = { ...lista };
@@ -51,24 +56,23 @@ async function salvarListaUsuarios(lista) {
         delete dadosSalvar._sha;
 
         const conteudo = Buffer.from(JSON.stringify(dadosSalvar, null, 2)).toString('base64');
-        const corpo = { message: "Update lista usuarios.json", content: conteudo };
+        const corpo = { message: "Sincronizando lista", content: conteudo };
         if (sha) corpo.sha = sha;
 
         const res = await requisicaoGitHub('PUT', 'usuarios.json', corpo);
         return res.content.sha;
     } catch (e) {
-        console.error("[Erro] Não foi possível salvar no usuarios.json");
+        console.error("[Banco Erro] Erro ao salvar no usuarios.json");
         return null;
     }
 }
 
-// Salva APENAS a posição do player na pasta física dele
+// Salva a posicao na pasta do player
 async function salvarPosicaoPlayer(nome, posicao) {
     try {
         const caminho = `players/${nome}/dados.json`;
         let shaExistente = null;
 
-        // Tenta pegar o SHA do arquivo de posição se ele já existir
         try {
             const info = await requisicaoGitHub('GET', caminho);
             shaExistente = info.sha;
@@ -76,12 +80,12 @@ async function salvarPosicaoPlayer(nome, posicao) {
 
         const dadosPosicao = { nome: nome, posicao: posicao };
         const conteudo = Buffer.from(JSON.stringify(dadosPosicao, null, 2)).toString('base64');
-        const corpo = { message: `Update posicao de ${nome}`, content: conteudo };
+        const corpo = { message: `Pasta de ${nome}`, content: conteudo };
         if (shaExistente) corpo.sha = shaExistente;
 
         await requisicaoGitHub('PUT', caminho, corpo);
     } catch (e) {
-        console.error(`[Erro] Falha ao salvar pasta física de posição para ${nome}`);
+        console.error("[Banco Erro] Erro ao criar pasta do player");
     }
 }
 
