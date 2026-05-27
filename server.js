@@ -7,8 +7,9 @@ const wss = new WebSocket.Server({ port: PORT });
 let usuarios = {}; 
 
 async function iniciar() {
+    console.log("[Jarvis] Lendo pastas físicas de jogadores...");
     usuarios = await banco.carregarTodosOsPlayers();
-    console.log(`[Jarvis] Pronto! ${Object.keys(usuarios).length} pastas de players prontas.`);
+    console.log("[Jarvis] Sistema de Pastas pronto!");
 }
 iniciar();
 
@@ -17,29 +18,28 @@ wss.on('connection', (ws) => {
         try {
             const dados = JSON.parse(message);
 
-            // REGISTRO
+            // AÇÃO: REGISTRAR (Cria a pasta física)
             if (dados.action === "register") {
                 if (usuarios[dados.username]) {
-                    return ws.send(JSON.stringify({ success: false, message: "Esta pasta já existe!" }));
+                    return ws.send(JSON.stringify({ success: false, message: "Pasta já existe!" }));
                 }
                 
-                // Primeiro guarda no servidor para o login funcionar na hora
                 usuarios[dados.username] = {
+                    nome: dados.username,
                     senha: dados.password,
                     posicao: [0, 2, 0],
                     id: 1000 + Object.keys(usuarios).length
                 };
 
-                // Avisa o jogo que deu certo
-                ws.send(JSON.stringify({ success: true, message: "Pasta criada! Pode logar." }));
-                
-                // Agora envia para o GitHub em segundo plano
-                const novoSha = await banco.salvarPlayer(dados.username, usuarios[dados.username]);
+                // Cria fisicamente no GitHub
+                const novoSha = await banco.salvarNoGitHub(dados.username, usuarios[dados.username]);
                 if (novoSha) usuarios[dados.username]._sha = novoSha;
+
+                ws.send(JSON.stringify({ success: true, message: "Pasta física criada no Game Rubi!" }));
                 return;
             }
 
-            // LOGIN
+            // AÇÃO: LOGIN (Entra na pasta)
             if (dados.action === "login") {
                 const conta = usuarios[dados.username];
                 if (conta && conta.senha === dados.password) {
@@ -47,25 +47,25 @@ wss.on('connection', (ws) => {
                         success: true,
                         player_id: String(conta.id),
                         last_pos: conta.posicao,
-                        message: "Entrando na sua pasta..."
+                        message: "Você entrou na sua pasta!"
                     }));
                 } else {
-                    ws.send(JSON.stringify({ success: false, message: "Senha ou Pasta não encontrada!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Pasta ou senha não encontrada!" }));
                 }
                 return;
             }
 
-            // SALVAR POSIÇÃO
+            // AÇÃO: SALVAR POSIÇÃO
             if (dados.action === "save_position") {
                 if (usuarios[dados.username]) {
                     usuarios[dados.username].posicao = dados.pos;
-                    const novoSha = await banco.salvarPlayer(dados.username, usuarios[dados.username]);
+                    const novoSha = await banco.salvarNoGitHub(dados.username, usuarios[dados.username]);
                     if (novoSha) usuarios[dados.username]._sha = novoSha;
                 }
                 return;
             }
 
-            // MULTIPLAYER
+            // REPASSE MULTIPLAYER
             wss.clients.forEach(c => { if (c !== ws && c.readyState === WebSocket.OPEN) c.send(message); });
         } catch (e) {}
     });
