@@ -1,62 +1,60 @@
 const WebSocket = require('ws');
-const banco = require('./database.js'); // Puxa as funções da nuvem
+const banco = require('./database.js');
 
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Game Rubi] Servidor do Reduto RP Inicializado com sucesso!");
+// Esta é a memória local do Game Rubi para logins instantâneos
+let usuariosCadastrados = {};
+
+// Quando o servidor liga, ele baixa tudo o que está salvo na nuvem para a memória
+async function sincronizarComANuvem() {
+    console.log("[Game Rubi] Conectando ao MongoDB e baixando dados...");
+    setTimeout(async () => {
+        usuariosCadastrados = await banco.carregarTodosOsUsuarios();
+        console.log(`[Game Rubi] Sucesso! ${Object.keys(usuariosCadastrados).length} contas carregadas da nuvem.`);
+    }, 3000); // Espera 3 segundos para o MongoDB ligar com folga
+}
+sincronizarComANuvem();
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
-            // Transforma o texto vindo do Godot em dados lógicos
             const dados = JSON.parse(message);
-
-            // --- 1. AÇÃO: REGISTRAR CONTA ---
+            
+            // --- 1. AÇÃO: REGISTRAR (Salva na memória e joga para a nuvem) ---
             if (dados.action === "register") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
 
-                console.log(`[Game Rubi] Recebendo tentativa de registro para: ${username}`);
-
-                // Pergunta para a nuvem se esse nome já existe
-                const existe = await banco.buscarUsuario(username);
-                if (existe) {
-                    console.log(`[Game Rubi] Registro recusado: ${username} já existe.`);
+                if (usuariosCadastrados[username]) {
                     return ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
                 }
 
-                // Cria a estrutura exata que o seu jogo precisa
-                const novoPlayer = {
+                // Salva na memória do servidor para o login automático do Godot aceitar NA HORA
+                usuariosCadastrados[username] = {
                     username: username,
                     password: password,
-                    id: 1000 + Math.floor(Math.random() * 9000),
+                    id: 1000 + Object.keys(usuariosCadastrados).length,
                     last_pos: [0, 2, 0]
                 };
 
-                // Responde o jogo primeiro para não dar lag
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
-
-                // Envia para o MongoDB logo em seguida para salvar para sempre
-                await banco.salvarUsuario(novoPlayer);
+                
+                // Envia uma cópia idêntica para o MongoDB ficar salvo permanentemente
+                await banco.salvarListaCompleta(usuariosCadastrados);
                 return;
             }
 
-            // --- 2. AÇÃO: LOGIN ---
+            // --- 2. AÇÃO: LOGIN (Instantâneo e direto da memória sincronizada) ---
             if (dados.action === "login") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
 
-                console.log(`[Game Rubi] Recebendo tentativa de login de: ${username}`);
+                const conta = usuariosCadastrados[username];
 
-                // Busca o usuário direto na nuvem
-                const conta = await banco.buscarUsuario(username);
-
-                // Compara se o usuário existe E se a senha bate exatamente com a digitada
                 if (conta && String(conta.password) === password) {
-                    console.log(`[Game Rubi] Login aprovado para: ${username}`);
-                    
-                    // Envia a resposta de sucesso de volta para o Godot entrar no mapa
+                    console.log(`[Reduto RP] ${username} entrou com sucesso.`);
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
@@ -64,31 +62,30 @@ wss.on('connection', (ws) => {
                         message: "Bem-vindo de volta!"
                     }));
                 } else {
-                    console.log(`[Game Rubi] Login recusado para: ${username} (Dados incorretos)`);
-                    ws.send(JSON.stringify({ success: false, message: "Usuário ou Senha incorreta!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Senha incorreta!" }));
                 }
                 return;
             }
 
             // --- 3. AÇÃO: SALVAR POSIÇÃO ---
             if (dados.action === "save_position") {
-                if (dados.username && dados.pos) {
-                    // Atualiza a localização na nuvem a todo momento
-                    await banco.atualizarPosicao(dados.username, dados.pos);
+                const username = String(dados.username).trim();
+                if (usuariosCadastrados[username] && dados.pos) {
+                    usuariosCadastrados[username].last_pos = dados.pos;
+                    
+                    // Atualiza a nuvem a todo momento sem travar o jogo
+                    await banco.salvarListaCompleta(usuariosCadastrados);
                 }
                 return;
             }
 
             // --- 4. MULTIPLAYER EM TEMPO REAL ---
-            // Repassa a posição dos players na tela para todos os outros conectados
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
                 }
             });
 
-        } catch (erro) {
-            // Protege o servidor contra mensagens corrompidas do WebSocket
-        }
+        } catch (erro) {}
     });
 });
