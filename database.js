@@ -1,4 +1,3 @@
-
 const https = require('https');
 
 const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
@@ -31,23 +30,25 @@ function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
     });
 }
 
-// Carrega todos os players de uma vez para o login ser instantâneo
 async function carregarTodosOsPlayers() {
     try {
         const lista = await requisicaoGitHub('GET', 'players');
         let todosDados = {};
-        for (let item of lista) {
-            if (item.type === 'dir') {
-                const det = await requisicaoGitHub('GET', `players/${item.name}/dados.json`);
-                const texto = Buffer.from(det.content, 'base64').toString('utf8');
-                todosDados[item.name] = JSON.parse(texto);
-                todosDados[item.name]._sha = det.sha;
+        // Se a lista for um array, significa que a pasta existe
+        if (Array.isArray(lista)) {
+            for (let item of lista) {
+                try {
+                    const det = await requisicaoGitHub('GET', `players/${item.name}/dados.json`);
+                    const texto = Buffer.from(det.content, 'base64').toString('utf8');
+                    todosDados[item.name] = JSON.parse(texto);
+                    todosDados[item.name]._sha = det.sha;
+                } catch (e) { console.log(`Pulando ${item.name}, arquivo não encontrado.`); }
             }
         }
         return todosDados;
     } catch (e) {
-        console.log("[Banco] Pasta 'players' ainda não existe ou está vazia.");
-        return {};
+        console.log("[Jarvis] Pasta 'players' ainda não existe. Será criada no primeiro registro.");
+        return {}; // Retorna vazio para o servidor começar limpo
     }
 }
 
@@ -63,9 +64,10 @@ async function salvarPlayer(nome, dados) {
         if (sha) corpo.sha = sha;
 
         const res = await requisicaoGitHub('PUT', caminho, corpo);
-        return res.content.sha; // Retorna o novo SHA
+        console.log(`[GitHub] Dados de ${nome} salvos com sucesso!`);
+        return res.content.sha;
     } catch (e) {
-        console.error(`[Erro GitHub] Falha ao salvar ${nome}`);
+        console.error(`[Erro GitHub] Erro ao salvar ${nome}: Status ${e.message}`);
         return null;
     }
 }
