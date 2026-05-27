@@ -2,56 +2,31 @@ const { MongoClient } = require('mongodb');
 
 const uri = "mongodb+srv://redutorp:rp123@cluster0.v8k3m.mongodb.net/?retryWrites=true&w=majority";
 const client = new MongoClient(uri);
+let contas;
 
-let db, contas, posicoes;
-
-async function conectarBanco() {
+async function conectar() {
     try {
         await client.connect();
-        db = client.db("reduto_rp");
-        contas = db.collection("contas");
-        posicoes = db.collection("posicoes");
-    } catch (e) {}
+        const db = client.db("reduto_rp");
+        contas = db.collection("usuarios_permanentes");
+        console.log("Nuvem conectada!");
+    } catch (e) { console.log("Erro nuvem:", e); }
 }
-conectarBanco();
+conectar();
 
-async function carregarListaUsuarios() {
-    try {
-        if (!contas) return {};
-        const lista = await contas.find({}).toArray();
-        let resultado = {};
-        lista.forEach(user => {
-            resultado[user.username] = { password: user.password, id: user.id, last_pos: user.last_pos };
-        });
-        return resultado;
-    } catch (e) { return {}; }
+async function buscarUsuarioUnico(nome) {
+    if (!contas) return null;
+    return await contas.findOne({ username: nome });
 }
 
-async function salvarListaUsuarios(lista) {
-    try {
-        const nomes = Object.keys(lista);
-        const ultimoNome = nomes[nomes.length - 1];
-        const usuario = lista[ultimoNome];
-        if (!usuario) return true;
-
-        await contas.updateOne(
-            { username: ultimoNome },
-            { $set: { username: ultimoNome, password: usuario.password, id: usuario.id, last_pos: usuario.last_pos } },
-            { upsert: true }
-        );
-        return true;
-    } catch (e) { return null; }
+async function salvarUsuarioDireto(dados) {
+    if (!contas) return;
+    await contas.updateOne({ username: dados.username }, { $set: dados }, { upsert: true });
 }
 
 async function salvarPosicaoPlayer(nome, posicao) {
-    try {
-        if (!posicoes) return;
-        await posicoes.updateOne(
-            { username: nome },
-            { $set: { username: nome, last_pos: posicao } },
-            { upsert: true }
-        );
-    } catch (e) {}
+    if (!contas) return;
+    await contas.updateOne({ username: nome }, { $set: { last_pos: posicao } });
 }
 
-module.exports = { carregarListaUsuarios, salvarListaUsuarios, salvarPosicaoPlayer };
+module.exports = { buscarUsuarioUnico, salvarUsuarioDireto, salvarPosicaoPlayer };
