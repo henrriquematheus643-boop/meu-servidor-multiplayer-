@@ -2,7 +2,7 @@ const https = require('https');
 
 // --- CONFIGURAÇÕES DO REPOSITÓRIO ---
 // Verifique se o nome do seu repositório termina com o traço "-" no GitHub. Se não terminar, apague o traço da linha abaixo!
-const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer";
+const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
 const GITHUB_TOKEN = "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"; 
 
 function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
