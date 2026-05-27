@@ -1,6 +1,5 @@
 const { MongoClient } = require('mongodb');
 
-// Banco de dados na nuvem configurado para o Reduto RP
 const uri = "mongodb+srv://redutorp:rp123@cluster0.v8k3m.mongodb.net/?retryWrites=true&w=majority";
 const client = new MongoClient(uri);
 
@@ -12,57 +11,47 @@ async function conectarBanco() {
         db = client.db("reduto_rp");
         contas = db.collection("contas");
         posicoes = db.collection("posicoes");
-        console.log("[Jarvis Banco] Conectado ao banco de dados em nuvem com sucesso!");
-    } catch (e) {
-        console.error("[Jarvis Banco Erro] Falha ao conectar:", e.message);
-    }
+    } catch (e) {}
 }
 conectarBanco();
 
-// Busca TODAS as contas do banco e organiza em um objeto para o servidor ler fácil
 async function carregarListaUsuarios() {
     try {
         if (!contas) return {};
         const lista = await contas.find({}).toArray();
         let resultado = {};
         lista.forEach(user => {
-            resultado[user.nome] = { nome: user.nome, senha: user.senha, id: user.id };
+            resultado[user.username] = { password: user.password, id: user.id, last_pos: user.last_pos };
         });
         return resultado;
-    } catch (e) {
-        return {};
-    }
+    } catch (e) { return {}; }
 }
 
-// Salva UM único usuário por vez de forma organizada e segura
-async function salvarNovoUsuario(nome, senha, id) {
+async function salvarListaUsuarios(lista) {
     try {
-        if (!contas) return null;
-        // O upsert garante que ele salve na vaga certa do player
-        const res = await contas.updateOne(
-            { nome: nome },
-            { $set: { nome: nome, senha: senha, id: id } },
+        const nomes = Object.keys(lista);
+        const ultimoNome = nomes[nomes.length - 1];
+        const usuario = lista[ultimoNome];
+        if (!usuario) return true;
+
+        await contas.updateOne(
+            { username: ultimoNome },
+            { $set: { username: ultimoNome, password: usuario.password, id: usuario.id, last_pos: usuario.last_pos } },
             { upsert: true }
         );
         return true;
-    } catch (e) {
-        console.error("[Jarvis Banco Erro] Erro ao salvar usuario:", e.message);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
-// Salva e altera a localização do jogador dinamicamente
 async function salvarPosicaoPlayer(nome, posicao) {
     try {
         if (!posicoes) return;
         await posicoes.updateOne(
-            { nome: nome },
-            { $set: { nome: nome, posicao: posicao } },
+            { username: nome },
+            { $set: { username: nome, last_pos: posicao } },
             { upsert: true }
         );
-    } catch (e) {
-        console.error("[Jarvis Banco Erro] Erro ao alterar posicao de " + nome);
-    }
+    } catch (e) {}
 }
 
-module.exports = { carregarListaUsuarios, salvarNovoUsuario, salvarPosicaoPlayer };
+module.exports = { carregarListaUsuarios, salvarListaUsuarios, salvarPosicaoPlayer };
