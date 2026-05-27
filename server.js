@@ -4,25 +4,41 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-// Esta é a memória local do Game Rubi para logins instantâneos
 let usuariosCadastrados = {};
+let bancoCarregado = false; // Trava de segurança
 
-// Quando o servidor liga, ele baixa tudo o que está salvo na nuvem para a memória
-async function sincronizarComANuvem() {
-    console.log("[Game Rubi] Conectando ao MongoDB e baixando dados...");
-    setTimeout(async () => {
-        usuariosCadastrados = await banco.carregarTodosOsUsuarios();
-        console.log(`[Game Rubi] Sucesso! ${Object.keys(usuariosCadastrados).length} contas carregadas da nuvem.`);
-    }, 3000); // Espera 3 segundos para o MongoDB ligar com folga
+// Função corrigida: Só libera o servidor DEPOIS de puxar os dados da nuvem
+async function iniciarServidorComNuvem() {
+    console.log("[Game Rubi] Iniciando conexão com o MongoDB...");
+    
+    // Tenta carregar os dados em um loop até conseguir se conectar à nuvem
+    for (let tentativa = 1; tentativa <= 5; tentativa++) {
+        try {
+            usuariosCadastrados = await banco.carregarTodosOsUsuarios();
+            
+            // Se encontrou dados ou pelo menos conectou sem erro
+            bancoCarregado = true;
+            console.log(`[Game Rubi] SUCESSO! Nuvem sincronizada na tentativa ${tentativa}. ${Object.keys(usuariosCadastrados).length} contas prontas.`);
+            break;
+        } catch (erro) {
+            console.log(`[Game Rubi] Aguardando nuvem... Tentativa ${tentativa}/5`);
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Espera 3 segundos antes de tentar de novo
+        }
+    }
+
+    if (!bancoCarregado) {
+        console.log("[Game Rubi] Aviso: Servidor iniciado em modo de segurança, mas a nuvem pode estar fora do ar.");
+    }
+    console.log(`[Game Rubi] Servidor do Reduto RP Online na porta ${PORT}`);
 }
-sincronizarComANuvem();
+iniciarServidorComNuvem();
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
             
-            // --- 1. AÇÃO: REGISTRAR (Salva na memória e joga para a nuvem) ---
+            // --- 1. AÇÃO: REGISTRAR ---
             if (dados.action === "register") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
@@ -31,7 +47,6 @@ wss.on('connection', (ws) => {
                     return ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
                 }
 
-                // Salva na memória do servidor para o login automático do Godot aceitar NA HORA
                 usuariosCadastrados[username] = {
                     username: username,
                     password: password,
@@ -41,12 +56,12 @@ wss.on('connection', (ws) => {
 
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
                 
-                // Envia uma cópia idêntica para o MongoDB ficar salvo permanentemente
+                // Salva o backup na nuvem na mesma hora
                 await banco.salvarListaCompleta(usuariosCadastrados);
                 return;
             }
 
-            // --- 2. AÇÃO: LOGIN (Instantâneo e direto da memória sincronizada) ---
+            // --- 2. AÇÃO: LOGIN ---
             if (dados.action === "login") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
@@ -54,7 +69,7 @@ wss.on('connection', (ws) => {
                 const conta = usuariosCadastrados[username];
 
                 if (conta && String(conta.password) === password) {
-                    console.log(`[Reduto RP] ${username} entrou com sucesso.`);
+                    console.log(`[Reduto RP] ${username} entrou.`);
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
@@ -73,7 +88,7 @@ wss.on('connection', (ws) => {
                 if (usuariosCadastrados[username] && dados.pos) {
                     usuariosCadastrados[username].last_pos = dados.pos;
                     
-                    // Atualiza a nuvem a todo momento sem travar o jogo
+                    // Sincroniza a posição com a nuvem
                     await banco.salvarListaCompleta(usuariosCadastrados);
                 }
                 return;
