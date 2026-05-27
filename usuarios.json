@@ -1,2 +1,14 @@
-{}
+{
+  "Matheus": {
+    "nome": "Matheus",
+    "senha": "123",
+    "id": 1000
+  },
+  "Pedro": {
+    "nome": "Pedro",
+    "senha": "456",
+    "id": 1001
+  }
+}
+
 
