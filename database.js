@@ -1,21 +1,15 @@
-// === REDUTO RP - SISTEMA DE ARMAZENAMENTO NO GITHUB (database.js) ===
+// === REDUTO RP - SISTEMA DE PASTAS POR PLAYER (database.js) ===
 const https = require('https');
 
-// --- CONFIGURAÇÕES DO REPOSITÓRIO ---
 const GITHUB_REPO = "henrriquematheus643-boop/meu-servidor-multiplayer-";
-const GITHUB_FILE_PATH = "usuarios.json"; // Arquivo onde as contas e posições serão escritas
-
-// COLOQUE SEU TOKEN AQUI: Lembre-se de gerar o Token (classic) com permissão 'repo' e colar aqui
 const GITHUB_TOKEN = "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"; 
 
-let usuariosCadastrados = {};
-let shaArquivo = "";
-
-function requisicaoGitHub(metodo, dadosEnviar = null) {
+// Função mestre para conversar com o GitHub
+function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
     return new Promise((resolve, reject) => {
         const opcoes = {
             hostname: 'api.github.com',
-            path: `/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+            path: `/repos/${GITHUB_REPO}/contents/${caminho}`,
             method: metodo,
             headers: {
                 'Authorization': `token ${GITHUB_TOKEN}`,
@@ -31,7 +25,7 @@ function requisicaoGitHub(metodo, dadosEnviar = null) {
                 if (res.statusCode >= 200 && res.statusCode < 300) {
                     resolve(JSON.parse(corpo));
                 } else {
-                    reject(new Error(`Erro GitHub (Status ${res.statusCode}): ${corpo}`));
+                    reject(new Error(res.statusCode));
                 }
             });
         });
@@ -42,50 +36,52 @@ function requisicaoGitHub(metodo, dadosEnviar = null) {
     });
 }
 
-// Baixa os dados do GitHub
-async function carregarDados() {
+// 1. Carregar dados de um player específico
+async function carregarDadosPlayer(nomePlayer) {
     try {
-        console.log("[Banco] Conectando ao GitHub para buscar registros...");
-        const resultado = await requisicaoGitHub('GET');
-        shaArquivo = resultado.sha;
-        
+        const caminho = `players/${nomePlayer}/dados.json`;
+        const resultado = await requisicaoGitHub('GET', caminho);
         const textoJson = Buffer.from(resultado.content, 'base64').toString('utf8');
-        usuariosCadastrados = JSON.parse(textoJson);
-        console.log("[Banco] Sucesso! Contas e posições carregadas.");
-        return usuariosCadastrados;
+        const dados = JSON.parse(textoJson);
+        dados._sha = resultado.sha; // Guarda o código de segurança do arquivo
+        return dados;
     } catch (erro) {
-        if (erro.message.includes('404')) {
-            console.log("[Banco] Arquivo usuarios.json não existe no GitHub. Criando um novo...");
-            usuariosCadastrados = {};
-            return usuariosCadastrados;
-        } else {
-            console.error("[Banco Error] Token incorreto ou inválido:", erro.message);
-            return {};
-        }
+        return null; // Retorna null se o player não existir
     }
 }
 
-// Envia os dados de volta para o GitHub
-async function salvarDados(novosDados) {
+// 2. Salvar ou Criar pasta e dados do player
+async function salvarDadosPlayer(nomePlayer, dados) {
     try {
-        usuariosCadastrados = novosDados;
-        const textoJson = JSON.stringify(usuariosCadastrados, null, 2);
+        const caminho = `players/${nomePlayer}/dados.json`;
+        
+        // Tenta pegar o SHA se o arquivo já existir para poder atualizar
+        let shaExistente = dados._sha || null;
+        if (!shaExistente) {
+            try {
+                const info = await requisicaoGitHub('GET', caminho);
+                shaExistente = info.sha;
+            } catch (e) { shaExistente = null; }
+        }
+
+        const dadosParaSalvar = { ...dados };
+        delete dadosParaSalvar._sha; // Remove o SHA dos dados internos
+
+        const textoJson = JSON.stringify(dadosParaSalvar, null, 2);
         const conteudoBase64 = Buffer.from(textoJson).toString('base64');
 
-        const dadosParaEnviar = {
-            message: "Reduto RP: Sincronizando contas e posições",
-            content: conteudoBase64,
-            sha: shaArquivo
+        const corpoRequisicao = {
+            message: `Reduto RP: Atualizando dados de ${nomePlayer}`,
+            content: conteudoBase64
         };
 
-        const resultado = await requisicaoGitHub('PUT', dadosParaEnviar);
-        shaArquivo = resultado.content.sha;
-        console.log("[Banco] Sincronizado com o GitHub com sucesso!");
+        if (shaExistente) corpoRequisicao.sha = shaExistente;
+
+        await requisicaoGitHub('PUT', caminho, corpoRequisicao);
+        console.log(`[GitHub] Pasta e dados de ${nomePlayer} sincronizados!`);
     } catch (erro) {
-        console.error("[Banco Error] Erro ao enviar dados para o GitHub:", erro.message);
+        console.error(`[Erro] Falha ao salvar pasta de ${nomePlayer}:`, erro.message);
     }
 }
 
-// Exporta as funções para o server.js conseguir usar
-module.exports = { carregarDados, salvarDados };
-
+module.exports = { carregarDadosPlayer, salvarDadosPlayer };
