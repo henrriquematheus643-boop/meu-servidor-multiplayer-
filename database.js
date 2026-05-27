@@ -30,46 +30,51 @@ function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
     });
 }
 
+// Essa função varre o GitHub para achar as pastas físicas
 async function carregarTodosOsPlayers() {
     try {
         const lista = await requisicaoGitHub('GET', 'players');
         let todosDados = {};
-        // Se a lista for um array, significa que a pasta existe
         if (Array.isArray(lista)) {
             for (let item of lista) {
-                try {
-                    const det = await requisicaoGitHub('GET', `players/${item.name}/dados.json`);
-                    const texto = Buffer.from(det.content, 'base64').toString('utf8');
-                    todosDados[item.name] = JSON.parse(texto);
-                    todosDados[item.name]._sha = det.sha;
-                } catch (e) { console.log(`Pulando ${item.name}, arquivo não encontrado.`); }
+                if (item.type === 'dir') { // Se for uma pasta
+                    try {
+                        const det = await requisicaoGitHub('GET', `players/${item.name}/dados.json`);
+                        const texto = Buffer.from(det.content, 'base64').toString('utf8');
+                        todosDados[item.name] = JSON.parse(texto);
+                        todosDados[item.name]._sha = det.sha;
+                    } catch (e) {}
+                }
             }
         }
         return todosDados;
     } catch (e) {
-        console.log("[Jarvis] Pasta 'players' ainda não existe. Será criada no primeiro registro.");
-        return {}; // Retorna vazio para o servidor começar limpo
+        return {}; 
     }
 }
 
-async function salvarPlayer(nome, dados) {
+async function salvarNoGitHub(nome, dados) {
     try {
+        // O segredo está aqui: o caminho cria as pastas fisicamente
         const caminho = `players/${nome}/dados.json`;
         const dadosSalvar = { ...dados };
         const sha = dadosSalvar._sha;
         delete dadosSalvar._sha;
 
         const conteudo = Buffer.from(JSON.stringify(dadosSalvar, null, 2)).toString('base64');
-        const corpo = { message: `Update ${nome}`, content: conteudo };
+        const corpo = { 
+            message: `Criando/Atualizando pasta do jogador: ${nome}`, 
+            content: conteudo 
+        };
+        
         if (sha) corpo.sha = sha;
 
         const res = await requisicaoGitHub('PUT', caminho, corpo);
-        console.log(`[GitHub] Dados de ${nome} salvos com sucesso!`);
         return res.content.sha;
     } catch (e) {
-        console.error(`[Erro GitHub] Erro ao salvar ${nome}: Status ${e.message}`);
+        console.error(`Erro ao criar pasta física de ${nome}`);
         return null;
     }
 }
 
-module.exports = { carregarTodosOsPlayers, salvarPlayer };
+module.exports = { carregarTodosOsPlayers, salvarNoGitHub };
