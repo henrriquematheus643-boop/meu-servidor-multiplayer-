@@ -4,12 +4,12 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-let usuariosContas = {}; // Armazena o que vem do usuarios.json
+let usuariosContas = {}; 
 
 async function iniciar() {
-    console.log("[Jarvis] Baixando lista geral de usuários...");
+    console.log("[Jarvis] Sincronizando banco de dados do GitHub...");
     usuariosContas = await banco.carregarListaUsuarios();
-    console.log("[Jarvis] Servidor Reduto RP pronto e sincronizado!");
+    console.log("[Jarvis] Servidor Reduto RP totalmente Online!");
 }
 iniciar();
 
@@ -18,56 +18,57 @@ wss.on('connection', (ws) => {
         try {
             const dados = JSON.parse(message);
 
-            // 1. REGISTRO (Salva no arquivo usuarios.json de cima para baixo)
+            // 1. AÇÃO: REGISTRAR (Salva no usuarios.json e cria a pasta física)
             if (dados.action === "register") {
                 if (usuariosContas[dados.username]) {
                     return ws.send(JSON.stringify({ success: false, message: "Este usuário já existe!" }));
                 }
 
-                // Cria o formato limpo que você pediu: sem posição, só Nome, Senha e ID
+                // Estrutura limpa de cima para baixo
                 usuariosContas[dados.username] = {
                     nome: dados.username,
                     senha: dados.password,
                     id: 1000 + Object.keys(usuariosContas).filter(k => k !== '_sha').length
                 };
 
-                ws.send(JSON.stringify({ success: true, message: "Conta registrada com sucesso!" }));
+                // Envia a resposta imediata pro Godot para não travar a tela do player
+                ws.send(JSON.stringify({ success: true, message: "Conta criada com sucesso!" }));
 
-                // Atualiza o arquivo usuarios.json lá no seu GitHub
+                // Grava no arquivo usuarios.json lá no GitHub
                 const novoSha = await banco.salvarListaUsuarios(usuariosContas);
-                usuariosContas._sha = novoSha;
+                if (novoSha) usuariosContas._sha = novoSha;
 
-                // Cria a pasta física inicial dele com a posição padrão [0, 2, 0]
+                // Cria a pasta física com a posição inicial de segurança [0, 2, 0]
                 await banco.salvarPosicaoPlayer(dados.username, [0, 2, 0]);
                 return;
             }
 
-            // 2. LOGIN (Busca direto do arquivo usuarios.json que está na memória)
+            // 2. AÇÃO: LOGIN (Entra direto usando os dados salvos)
             if (dados.action === "login") {
                 const conta = usuariosContas[dados.username];
                 if (conta && conta.senha === dados.password) {
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
-                        last_pos: [0, 2, 0], // Envia a inicial (o jogo vai atualizar com o save_position logo em seguida)
-                        message: "Bem-vindo ao Reduto RP!"
+                        last_pos: [0, 2, 0], // Posição padrão (será atualizada pelo save_position do jogo)
+                        message: "Entrando no Reduto RP..."
                     }));
                 } else {
-                    ws.send(JSON.stringify({ success: false, message: "Senha ou Usuário incorreto!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Usuário ou Senha incorreta!" }));
                 }
                 return;
             }
 
-            // 3. SALVAR POSIÇÃO (Não mexe no arquivo geral, salva na pasta física do player)
+            // 3. AÇÃO: SALVAR LOCALIZAÇÃO (Salva apenas na pasta do player)
             if (dados.action === "save_position") {
                 if (usuariosContas[dados.username]) {
-                    // Envia a posição para a pasta do jogador: players/Nome/dados.json
+                    // Salva direto na pasta física: players/Nome/dados.json
                     await banco.salvarPosicaoPlayer(dados.username, dados.pos);
                 }
                 return;
             }
 
-            // 4. MULTIPLAYER EM TEMPO REAL
+            // 4. SISTEMA MULTIPLAYER (Mandar movimento para os outros players)
             wss.clients.forEach(c => { if (c !== ws && c.readyState === WebSocket.OPEN) c.send(message); });
         } catch (e) {}
     });
