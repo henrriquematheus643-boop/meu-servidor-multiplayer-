@@ -30,51 +30,59 @@ function requisicaoGitHub(metodo, caminho, dadosEnviar = null) {
     });
 }
 
-// Essa função varre o GitHub para achar as pastas físicas
-async function carregarTodosOsPlayers() {
+// Carrega a lista geral de usuários do arquivo usuarios.json
+async function carregarListaUsuarios() {
     try {
-        const lista = await requisicaoGitHub('GET', 'players');
-        let todosDados = {};
-        if (Array.isArray(lista)) {
-            for (let item of lista) {
-                if (item.type === 'dir') { // Se for uma pasta
-                    try {
-                        const det = await requisicaoGitHub('GET', `players/${item.name}/dados.json`);
-                        const texto = Buffer.from(det.content, 'base64').toString('utf8');
-                        todosDados[item.name] = JSON.parse(texto);
-                        todosDados[item.name]._sha = det.sha;
-                    } catch (e) {}
-                }
-            }
-        }
-        return todosDados;
+        const resultado = await requisicaoGitHub('GET', 'usuarios.json');
+        const textoJson = Buffer.from(resultado.content, 'base64').toString('utf8');
+        const dados = JSON.parse(textoJson);
+        dados._sha = resultado.sha; // Guarda o SHA para atualizar depois
+        return dados;
     } catch (e) {
-        return {}; 
+        return { _sha: null }; // Se não existir, começa do zero
     }
 }
 
-async function salvarNoGitHub(nome, dados) {
+// Salva a lista geral de usuários no usuarios.json (Nome, Senha e ID)
+async function salvarListaUsuarios(lista) {
     try {
-        // O segredo está aqui: o caminho cria as pastas fisicamente
-        const caminho = `players/${nome}/dados.json`;
-        const dadosSalvar = { ...dados };
+        const dadosSalvar = { ...lista };
         const sha = dadosSalvar._sha;
         delete dadosSalvar._sha;
 
         const conteudo = Buffer.from(JSON.stringify(dadosSalvar, null, 2)).toString('base64');
-        const corpo = { 
-            message: `Criando/Atualizando pasta do jogador: ${nome}`, 
-            content: conteudo 
-        };
-        
+        const corpo = { message: "Update lista usuarios.json", content: conteudo };
         if (sha) corpo.sha = sha;
 
-        const res = await requisicaoGitHub('PUT', caminho, corpo);
+        const res = await requisicaoGitHub('PUT', 'usuarios.json', corpo);
         return res.content.sha;
     } catch (e) {
-        console.error(`Erro ao criar pasta física de ${nome}`);
+        console.error("[Erro] Não foi possível salvar no usuarios.json");
         return null;
     }
 }
 
-module.exports = { carregarTodosOsPlayers, salvarNoGitHub };
+// Salva APENAS a posição do player na pasta física dele
+async function salvarPosicaoPlayer(nome, posicao) {
+    try {
+        const caminho = `players/${nome}/dados.json`;
+        let shaExistente = null;
+
+        // Tenta pegar o SHA do arquivo de posição se ele já existir
+        try {
+            const info = await requisicaoGitHub('GET', caminho);
+            shaExistente = info.sha;
+        } catch (e) {}
+
+        const dadosPosicao = { nome: nome, posicao: posicao };
+        const conteudo = Buffer.from(JSON.stringify(dadosPosicao, null, 2)).toString('base64');
+        const corpo = { message: `Update posicao de ${nome}`, content: conteudo };
+        if (shaExistente) corpo.sha = shaExistente;
+
+        await requisicaoGitHub('PUT', caminho, corpo);
+    } catch (e) {
+        console.error(`[Erro] Falha ao salvar pasta física de posição para ${nome}`);
+    }
+}
+
+module.exports = { carregarListaUsuarios, salvarListaUsuarios, salvarPosicaoPlayer };
