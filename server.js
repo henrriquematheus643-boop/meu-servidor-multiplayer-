@@ -4,72 +4,76 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Jarvis] Sistema de Nuvem Reduto RP v3 - Ativado");
+console.log("[Jarvis] Servidor Reduto RP via Armazenamento GitHub Online!");
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
-            
-            // --- REGISTRO (Com trava real para nomes iguais) ---
-            if (dados.action === "register") {
-                const username = String(dados.username).trim();
-                const password = String(dados.password).trim();
 
-                // Busca se já existe esse nome exato
-                const usuarioExistente = await banco.buscarUsuarioUnico(username);
-                
-                if (usuarioExistente) {
-                    console.log(`[Registro] Recusado: ${username} já existe.`);
+            // --- 1. AÇÃO: REGISTRAR ---
+            if (dados.action === "register") {
+                const listaContas = await banco.carregarListaUsuarios();
+                const usuarioLimpado = String(dados.username).trim();
+
+                // Se o usuário já existir no arquivo do GitHub, cancela
+                if (listaContas[usuarioLimpado]) {
                     return ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
                 }
 
-                // Se não existe, cria a conta nova
-                const novaConta = {
-                    username: username,
-                    password: password,
-                    id: 1000 + Math.floor(Math.random() * 8999),
+                // Adiciona o novo player no formato padrão
+                listaContas[usuarioLimpado] = {
+                    username: usuarioLimpado,
+                    password: String(dados.password).trim(),
+                    id: 1000 + Object.keys(listaContas).length,
                     last_pos: [0, 2, 0]
                 };
 
-                await banco.salvarUsuarioDireto(novaConta);
-                console.log(`[Registro] Sucesso: ${username} salvo na nuvem.`);
+                // Envia direto para o seu repositório do GitHub
+                await banco.salvarListaUsuarios(listaContas);
+                
+                console.log(`[GitHub Salvo] Conta criada: ${usuarioLimpado}`);
                 ws.send(JSON.stringify({ success: true, message: "Conta criada com sucesso!" }));
                 return;
             }
 
-            // --- LOGIN (Com verificação rigorosa) ---
+            // --- 2. AÇÃO: LOGIN ---
             if (dados.action === "login") {
-                const usernameDigitado = String(dados.username).trim();
-                const passwordDigitada = String(dados.password).trim();
+                const listaContas = await banco.carregarListaUsuarios();
+                const usuarioLimpado = String(dados.username).trim();
+                const senhaLimpada = String(dados.password).trim();
 
-                const conta = await banco.buscarUsuarioUnico(usernameDigitado);
-                
-                // Verifica se a conta existe E se a senha bate exatamente
-                if (conta && String(conta.password) === passwordDigitada) {
-                    console.log(`[Login] Sucesso: ${usernameDigitado} entrou.`);
+                const conta = listaContas[usuarioLimpado];
+
+                // Validação idêntica às chaves que o Godot envia
+                if (conta && String(conta.password) === senhaLimpada) {
+                    console.log(`[Login] ${usuarioLimpado} entrou.`);
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
                         last_pos: conta.last_pos || [0, 2, 0],
-                        message: "Bem-vindo de volta!"
+                        message: "Bem-vindo ao Reduto RP!"
                     }));
                 } else {
-                    console.log(`[Login] Falhou: Dados incorretos para ${usernameDigitado}`);
+                    console.log(`[Login Falhou] Dados incorretos para: ${usuarioLimpado}`);
                     ws.send(JSON.stringify({ success: false, message: "Usuário ou Senha incorretos!" }));
                 }
                 return;
             }
 
-            // --- SALVAR POSIÇÃO ---
+            // --- 3. AÇÃO: SALVAR POSIÇÃO ---
             if (dados.action === "save_position") {
-                if (dados.username && dados.pos) {
-                    await banco.salvarPosicaoPlayer(dados.username, dados.pos);
+                const listaContas = await banco.carregarListaUsuarios();
+                const usuarioLimpado = String(dados.username).trim();
+
+                if (listaContas[usuarioLimpado] && dados.pos) {
+                    listaContas[usuarioLimpado].last_pos = dados.pos;
+                    await banco.salvarListaUsuarios(listaContas);
                 }
                 return;
             }
 
-            // --- MULTIPLAYER ---
+            // --- 4. TRANSMISSÃO MULTIPLAYER ---
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
@@ -77,7 +81,7 @@ wss.on('connection', (ws) => {
             });
 
         } catch (erro) {
-            console.error("Erro no servidor:", erro);
+            // Ignora erros bobos de JSON para não derrubar o servidor
         }
     });
 });
