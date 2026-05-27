@@ -4,58 +4,51 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-let usuariosContas = {}; 
-
-// Quando o servidor liga, ele busca as contas salvas na nuvem para ninguém perder o login
-async function iniciarServidor() {
-    console.log("[Jarvis] Conectando e baixando contas da nuvem...");
-    // Espera 3 segundos para dar tempo do MongoDB conectar primeiro
-    setTimeout(async () => {
-        usuariosContas = await banco.carregarListaUsuarios();
-        console.log(`[Jarvis] Sucesso! ${Object.keys(usuariosContas).length} contas carregadas e protegidas.`);
-    }, 3000);
-}
-iniciarServidor();
+console.log("[Jarvis] Servidor Reduto RP conectado ao Banco em Nuvem!");
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
 
-            // --- 1. REGISTRO (Salva para sempre na nuvem) ---
+            // --- 1. REGISTRO (Salva na Nuvem para Sempre) ---
             if (dados.action === "register") {
-                // Atualiza a lista antes de checar para garantir que pegou registros novos
-                usuariosContas = await banco.carregarListaUsuarios();
+                // Busca a lista atualizada direto do banco para saber se o nome já existe
+                const listaAtual = await banco.carregarListaUsuarios();
                 
-                if (usuariosContas[dados.username]) {
+                if (listaAtual[dados.username]) {
                     return ws.send(JSON.stringify({ success: false, message: "Este usuario ja existe!" }));
                 }
 
-                usuariosContas[dados.username] = {
+                // Cria o novo usuário na lista
+                listaAtual[dados.username] = {
                     nome: dados.username,
                     senha: dados.password,
-                    id: 1000 + Object.keys(usuariosContas).length
+                    id: 1000 + Object.keys(listaAtual).length
                 };
 
-                ws.send(JSON.stringify({ success: true, message: "Conta criada e salva na nuvem!" }));
-
-                // Salva no MongoDB de cima para baixo
-                await banco.salvarListaUsuarios(usuariosContas);
-                // Cria a posicao inicial dele para sempre
+                // Salva a lista de contas atualizada no banco de dados
+                await banco.salvarListaUsuarios(listaAtual);
+                
+                // Cria a posição inicial de segurança do player na nuvem
                 await banco.salvarPosicaoPlayer(dados.username, [0, 2, 0]);
+
+                ws.send(JSON.stringify({ success: true, message: "Conta criada com sucesso!" }));
                 return;
             }
 
-            // --- 2. LOGIN (Busca direto os dados seguros) ---
+            // --- 2. CONSERTADO: LOGIN (Busca direto na Nuvem na hora) ---
             if (dados.action === "login") {
-                usuariosContas = await banco.carregarListaUsuarios();
-                const conta = usuariosContas[dados.username];
+                // Força o servidor a carregar as contas do banco AGORA
+                const listaAtual = await banco.carregarListaUsuarios();
+                const conta = listaAtual[dados.username];
                 
                 if (conta && conta.senha === dados.password) {
+                    console.log(`[Login] ${dados.username} entrou no servidor.`);
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
-                        last_pos: [0, 2, 0], // O save_position do seu jogo vai atualizar isso logo em seguida
+                        last_pos: [0, 2, 0], // O jogo vai carregar a posição real logo em seguida
                         message: "Bem-vindo ao Reduto RP!"
                     }));
                 } else {
@@ -64,10 +57,12 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            // --- 3. SALVAR POSIÇÃO (Atualiza toda hora sem apagar nada) ---
+            // --- 3. SALVAR POSIÇÃO (Atualiza a todo momento sem apagar nada) ---
             if (dados.action === "save_position") {
-                // Atualiza direto no banco de dados a posicao atual do player
-                await banco.salvarPosicaoPlayer(dados.username, dados.pos);
+                if (dados.username && dados.pos) {
+                    // Atualiza a posição na nuvem sem mexer na senha ou no ID do player
+                    await banco.salvarPosicaoPlayer(dados.username, dados.pos);
+                }
                 return;
             }
 
@@ -78,6 +73,8 @@ wss.on('connection', (ws) => {
                 }
             });
 
-        } catch (erro) {}
+        } catch (erro) {
+            console.error("[Erro Servidor]", erro.message);
+        }
     });
 });
