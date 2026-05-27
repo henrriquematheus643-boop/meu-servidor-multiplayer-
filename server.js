@@ -1,81 +1,84 @@
+// === REDUTO RP - SERVIDOR MULTIPLAYER (server.js) ===
 const WebSocket = require('ws');
-const banco = require('./database.js'); // Conecta direto com o seu database.js da nuvem
+const banco = require('./database.js'); // Conecta com o sistema de nuvem automaticamente!
 
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Jarvis] Servidor Reduto RP Online e Conectado a Nuvem!");
+let usuariosCadastrados = {};
+let proximoPlayerId = 1000;
+
+// Inicializa o servidor conectando ao banco de dados na nuvem
+async function iniciarServidor() {
+    // Carrega todas as contas da nuvem para a memória idêntico ao seu original
+    usuariosCadastrados = await banco.carregarListaUsuarios();
+    proximoPlayerId = 1000 + Object.keys(usuariosCadastrados).length;
+    console.log(`[Jarvis] Servidor Reduto RP Online na porta ${PORT} (Nuvem Ativada)`);
+}
+iniciarServidor();
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
-
-            // --- 1. AÇÃO: REGISTRAR CONTA (Salva na Nuvem) ---
+            
+            // --- 1. REGISTRO (Igual ao seu original, mas salvando na nuvem) ---
             if (dados.action === "register") {
-                const listaAtual = await banco.carregarListaUsuarios();
-                
-                // Se o usuário já existir no banco em nuvem, barra o registro
-                if (listaAtual[dados.username]) {
-                    console.log(`[Registro] Nome recusado (ja existe): ${dados.username}`);
-                    return ws.send(JSON.stringify({ success: false, message: "Este usuario ja existe!" }));
+                const { username, password } = dados;
+                if (usuariosCadastrados[username]) {
+                    ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
+                } else {
+                    usuariosCadastrados[username] = {
+                        password: password,
+                        id: proximoPlayerId++,
+                        last_pos: [0, 2, 0]
+                    };
+                    ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
+                    
+                    // Salva na nuvem usando a lista do seu jeito original
+                    await banco.salvarListaUsuarios(usuariosCadastrados);
+                    // Cria a posição inicial na nuvem
+                    await banco.salvarPosicaoPlayer(username, [0, 2, 0]);
                 }
-
-                // Cria o ID único baseado em quantos players já existem no banco
-                const novoId = 1000 + Object.keys(listaAtual).length;
-
-                // Salva a conta de forma definitiva na nuvem
-                await banco.salvarNovoUsuario(dados.username, dados.password, novoId);
-                
-                // Cria a posição inicial padrão na nuvem para o player
-                await banco.salvarPosicaoPlayer(dados.username, [0, 2, 0]);
-
-                console.log(`[Registro] Nova conta salva na nuvem: ${dados.username} (ID: ${novoId})`);
-                ws.send(JSON.stringify({ success: true, message: "Conta criada com sucesso!" }));
                 return;
             }
 
-            // --- 2. AÇÃO: LOGIN (Busca na Nuvem na hora) ---
+            // --- 2. LOGIN (Exatamente o seu original que funcionava no Godot) ---
             if (dados.action === "login") {
-                const listaAtual = await banco.carregarListaUsuarios();
-                const conta = listaAtual[dados.username];
-
-                // Valida se o usuário existe e se a senha está certa
-                if (conta && String(conta.senha) === String(dados.password)) {
-                    console.log(`[Login] ${dados.username} entrou com sucesso!`);
-                    
+                const conta = usuariosCadastrados[dados.username];
+                if (conta && conta.password === dados.password) {
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
-                        last_pos: [0, 2, 0], // O jogo vai puxar a posição real logo em seguida
-                        message: "Bem-vindo ao Reduto RP!"
+                        last_pos: conta.last_pos || [0, 2, 0],
+                        message: "Bem-vindo de volta!"
                     }));
                 } else {
-                    console.log(`[Login Falhou] Dados incorretos para: ${dados.username}`);
-                    ws.send(JSON.stringify({ success: false, message: "Usuario ou Senha incorreta!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Senha incorreta!" }));
                 }
                 return;
             }
 
-            // --- 3. AÇÃO: SALVAR POSIÇÃO / ATUALIZAÇÕES ---
+            // --- 3. SALVAR POSIÇÃO (Exatamente o seu original) ---
             if (dados.action === "save_position") {
-                if (dados.username && dados.pos) {
-                    // Atualiza a posição na nuvem a todo momento sem apagar a conta
-                    await banco.salvarPosicaoPlayer(dados.username, dados.pos);
+                const { username, pos } = dados;
+                if (usuariosCadastrados[username]) {
+                    usuariosCadastrados[username].last_pos = pos;
+                    
+                    // Atualiza a caminhada dele lá na nuvem a todo momento
+                    await banco.salvarPosicaoPlayer(username, pos);
+                    console.log(`[Posição] ${username} salva na Nuvem: ${pos}`);
                 }
                 return;
             }
 
             // --- 4. MULTIPLAYER EM TEMPO REAL ---
-            // Envia a movimentação de um player para todos os outros que estão online
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
                 }
             });
 
-        } catch (erro) {
-            console.error("[Erro no Processamento]", erro.message);
-        }
+        } catch (erro) {}
     });
 });
