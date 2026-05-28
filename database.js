@@ -1,17 +1,13 @@
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient } = require('mongodb');
 
-// Link oficial SRM (mongodb+srv) com as configurações de segurança exigidas pelo seu novo banco
-const uri = "mongodb+srv://redutorpnovo:rp123456@clusterreduto.v8k3m.mongodb.net/?retryWrites=true&w=majority&appName=ClusterReduto";
+// ROTA COM IPS NUMÉRICOS REAIS: Pula 100% o sistema de nomes do Render
+// Conecta direto nas portas certas da sua nova nuvem sem usar o mongodb+srv
+const uri = "mongodb://redutorpnovo:rp123456@18.230.74.205:27017,54.94.133.52:27017,54.233.170.218:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
 
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-  // Força o driver a insistir na conexão se o Render oscilar
-  connectTimeoutMS: 30000,
-  socketTimeoutMS: 45000
+    useUnifiedTopology: true,
+    connectTimeoutMS: 30000,
+    socketTimeoutMS: 45000
 });
 
 let db = null;
@@ -19,16 +15,13 @@ let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando ao cluster seguro...");
+        console.log("[Nuvem MongoDB] Conectando via IPs numéricos diretos (Burlou o Render)...");
         await client.connect();
-        
-        // Define o banco de dados e a tabela correta
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        
-        console.log("[Nuvem MongoDB] ✅ CONECTADO COM SUCESSO! Banco de dados pronto para gravar.");
+        console.log("[Nuvem MongoDB] ✅ CONECTADO COM SUCESSO! A nuvem está ativa e travada.");
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Falha na conexão de segurança:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha crítica na rota de IPs:", e.message);
     }
 }
 conectar();
@@ -38,7 +31,6 @@ async function buscarUsuarioNaNuvem(nome) {
         if (!colecao) return null;
         return await colecao.findOne({ username: String(nome).trim().toLowerCase() });
     } catch (e) {
-        console.error("[Nuvem Erro] Falha ao buscar usuário:", e.message);
         return null;
     }
 }
@@ -47,8 +39,6 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
     try {
         if (!colecao) return false;
         const nome = String(dadosJogador.username).trim().toLowerCase();
-        
-        // Força o salvamento e espera a confirmação da nuvem
         await colecao.updateOne(
             { username: nome },
             { $set: dadosJogador },
@@ -56,7 +46,6 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
         );
         return true;
     } catch (e) {
-        console.error("[Nuvem Erro] O banco rejeitou a gravação:", e.message);
         return false;
     }
 }
