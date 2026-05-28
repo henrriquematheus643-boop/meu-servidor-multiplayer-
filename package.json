@@ -8,8 +8,7 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "axios": "^1.6.8",
-    "mysql2": "^3.9.7"
+    "pg": "^8.11.5"
   },
   "author": "",
   "license": "ISC"
