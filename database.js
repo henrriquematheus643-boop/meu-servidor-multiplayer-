@@ -1,27 +1,24 @@
 const { MongoClient } = require('mongodb');
 
-// ROTA COM IPS NUMÉRICOS REAIS: Pula 100% o sistema de nomes do Render
-// Conecta direto nas portas certas da sua nova nuvem sem usar o mongodb+srv
-const uri = "mongodb://redutorpnovo:rp123456@18.230.74.205:27017,54.94.133.52:27017,54.233.170.218:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
+// Rota híbrida oficial: Usa os nomes dos shards direto. 
+// Isso elimina o ENOTFOUND do Render e é aceito perfeitamente pelo certificado SSL do MongoDB!
+const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
 
-const client = new MongoClient(uri, {
-    useUnifiedTopology: true,
-    connectTimeoutMS: 30000,
-    socketTimeoutMS: 45000
-});
+// Criado o cliente sem NENHUMA opção antiga/depreciada para zerar os Warnings no Render
+const client = new MongoClient(uri);
 
 let db = null;
 let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando via IPs numéricos diretos (Burlou o Render)...");
+        console.log("[Nuvem MongoDB] Conectando ao banco de dados por rota híbrida estável...");
         await client.connect();
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        console.log("[Nuvem MongoDB] ✅ CONECTADO COM SUCESSO! A nuvem está ativa e travada.");
+        console.log("[Nuvem MongoDB] ✅ CONECTADO COM SUCESSO! Sistema 100% pronto e limpo.");
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Falha crítica na rota de IPs:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha crítica na conexão:", e.message);
     }
 }
 conectar();
