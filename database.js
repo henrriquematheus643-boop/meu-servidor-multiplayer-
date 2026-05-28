@@ -1,7 +1,7 @@
 const { MongoClient } = require('mongodb');
 
-// Alterado o protocolo para 'mongodb://' com os nós diretos para blindar contra o ENOTFOUND do Render
-const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
+// URI oficial configurada para o seu novo Cluster do Reduto RP
+const uri = "mongodb+srv://redutorpnovo:rp123456@clusterreduto.v8k3m.mongodb.net/reduto_data?retryWrites=true&w=majority";
 
 const client = new MongoClient(uri);
 let db = null;
@@ -9,13 +9,13 @@ let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando ao banco de dados seguro...");
+        console.log("[Nuvem MongoDB] Conectando ao cluster...");
         await client.connect();
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! Sistema pronto para receber jogadores.");
+        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO!");
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Falha na conexão de segurança:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha ao conectar:", e.message);
     }
 }
 conectar();
@@ -23,24 +23,29 @@ conectar();
 async function buscarUsuarioNaNuvem(nome) {
     try {
         if (!colecao) return null;
-        return await colecao.findOne({ username: String(nome).trim() });
+        return await colecao.findOne({ username: String(nome).trim().toLowerCase() });
     } catch (e) {
+        console.error("[Nuvem Erro] Falha ao buscar usuário:", e.message);
         return null;
     }
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
     try {
-        if (!colecao) return;
-        const nome = String(dadosJogador.username).trim();
-        await colecao.updateOne(
+        if (!colecao) throw new Error("Coleção MongoDB não inicializada");
+        const nome = String(dadosJogador.username).trim().toLowerCase();
+        
+        // O await aqui garante que o Node espere o MongoDB salvar de verdade
+        const resultado = await colecao.updateOne(
             { username: nome },
             { $set: dadosJogador },
             { upsert: true }
         );
-        console.log(`[Nuvem MongoDB] Dados de ${nome} salvos.`);
+        
+        return true;
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Erro ao gravar dados:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha real ao gravar dados:", e.message);
+        return false;
     }
 }
 
