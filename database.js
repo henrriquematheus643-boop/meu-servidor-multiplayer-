@@ -1,21 +1,26 @@
 const { MongoClient } = require('mongodb');
 
-// Link da NOVA nuvem estável e configurada que criei para o Reduto RP
-const uri = "mongodb+srv://redutorpnovo:rp123456@clusterreduto.v8k3m.mongodb.net/reduto_data?retryWrites=true&w=majority";
+// Convertido para a Rota de IPs Diretos (Standard Connection String)
+// Isso pula o resolvedor de DNS do Render e impede o erro ENOTFOUND
+const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
 
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+});
+
 let db = null;
 let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando ao novo cluster de segurança...");
+        console.log("[Nuvem MongoDB] Tentando conexão via rota de IPs diretos...");
         await client.connect();
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! A nuvem está ativa e vitalícia.");
+        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! A rota direta funcionou.");
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Falha crítica de conexão:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha crítica na rota direta:", e.message);
     }
 }
 conectar();
@@ -30,7 +35,7 @@ async function buscarUsuarioNaNuvem(nome) {
     }
 }
 
-// Grava ou atualiza o jogador de forma isolada na nuvem (Não apaga nunca)
+// Grava ou atualiza os dados do jogador de forma isolada na nuvem
 async function salvarUsuarioNaNuvem(dadosJogador) {
     try {
         if (!colecao) return;
@@ -40,14 +45,14 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
             { $set: dadosJogador },
             { upsert: true }
         );
-        console.log(`[Nuvem MongoDB] Posição e dados de ${nome} cravados na nuvem!`);
+        console.log(`[Nuvem MongoDB] Dados de ${nome} sincronizados com sucesso.`);
     } catch (e) {
         console.error("[Nuvem MongoDB Erro] Erro ao gravar dados:", e.message);
     }
 }
 
 // Puxa a lista completa para o painel do Render ler
-async function obterTodosOsUsuarios() {
+async function obtenerTodosOsUsuarios() {
     try {
         if (!colecao) return [];
         return await colecao.find({}).toArray();
