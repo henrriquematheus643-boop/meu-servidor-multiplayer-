@@ -1,23 +1,25 @@
 const { MongoClient } = require('mongodb');
 
-// Link permanente do MongoDB do Reduto RP
-const uri = "mongodb+srv://redutorp:rp123@cluster0.v8k3m.mongodb.net/?retryWrites=true&w=majority";
+// Rota direta e atualizada para a nova nuvem estável do Reduto RP
+const uri = "mongodb://redutorp:rp123@cluster0-shard-00-00.v8k3m.mongodb.net:27017,cluster0-shard-00-01.v8k3m.mongodb.net:27017,cluster0-shard-00-02.v8k3m.mongodb.net:27017/reduto_rp?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
+
 const client = new MongoClient(uri);
-let db, colecao;
+let db = null;
+let colecao = null;
 
 async function conectar() {
     try {
+        console.log("[Nuvem] Conectando ao novo banco de dados seguro do Reduto RP...");
         await client.connect();
         db = client.db("reduto_rp");
         colecao = db.collection("servidor_dados");
-        console.log("[MongoDB Nuvem] Banco de dados conectado com sucesso!");
+        console.log("[Nuvem] CONECTADO COM SUCESSO! Sistema online.");
     } catch (e) {
-        console.error("[MongoDB Nuvem Erro] Falha na conexão:", e.message);
+        console.error("[Nuvem Erro] Falha na conexão direta:", e.message);
     }
 }
 conectar();
 
-// Puxa todas as contas salvas para entregar ao servidor quando ele ligar
 async function carregarTodosOsUsuarios() {
     try {
         if (!colecao) return {};
@@ -31,7 +33,6 @@ async function carregarTodosOsUsuarios() {
     }
 }
 
-// Salva e atualiza a lista inteira de forma sólida
 async function salvarListaCompleta(lista) {
     try {
         if (!colecao) return;
@@ -41,7 +42,7 @@ async function salvarListaCompleta(lista) {
             { upsert: true }
         );
     } catch (e) {
-        console.error("[MongoDB Nuvem Erro] Erro ao sincronizar dados.");
+        console.error("[Nuvem Erro] Falha ao sincronizar dados na nuvem.");
     }
 }
 
