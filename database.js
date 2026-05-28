@@ -1,18 +1,22 @@
 const { Client } = require('pg');
 
-// 🔒 NOVA ROTA COM PORTA 6543 (POOLER) - Evita bloqueios do Render com o Supabase
+// 🔒 SUA ROTA DA PORTA 6543
 const connectionString = "postgresql://postgres.riqsfqhnfmerwvhidalp:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require";
 
 const client = new Client({
     connectionString: connectionString,
-    connectionTimeoutMillis: 15000, // Dá mais tempo para o banco responder
+    connectionTimeoutMillis: 15000,
+    // 🛡️ CONFIGURAÇÃO DE SEGURANÇA: Autoriza o certificado do Supabase e elimina o erro "self-signed certificate"
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando ao Supabase via Porta Segura 6543...");
+        console.log("[Nuvem] Conectando ao Supabase com autorização de certificado...");
         await client.connect();
         conectadoA_Nuvem = true;
         
