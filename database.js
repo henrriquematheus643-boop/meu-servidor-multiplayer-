@@ -1,21 +1,27 @@
 const { Client } = require('pg');
 
+// Link da nuvem Supabase do Reduto RP
 const connectionString = "postgresql://postgres.v8k3m.supabase.co:5432/postgres?user=postgres.v8k3m&password=RedutoRP123456";
 
 const client = new Client({
     connectionString: connectionString,
-    connectionTimeoutMillis: 5000 // Desiste rápido se a nuvem sumir para não travar o jogo
+    connectionTimeoutMillis: 10000,
+    // 🔒 CHAVE DO SEGREDO: Força o uso de SSL/Criptografia exigido pelo Render para conectar na nuvem externa
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Tentando estabelecer conexão de fundo com o Supabase...");
+        console.log("[Nuvem] Conectando ao Supabase com protocolo SSL Ativado...");
         await client.connect();
         conectadoA_Nuvem = true;
+        
         console.log("=======================================================");
-        console.log("✅ [SUPABASE] CONECTADO E PRONTO PARA BACKUP!");
+        console.log("✅ [SUPABASE] CONECTADO TOTALMENTE COM SUCESSO À NUVEM!");
         console.log("=======================================================");
         
         await client.query(`
@@ -28,8 +34,8 @@ async function conectar() {
         `);
     } catch (e) {
         console.log("=======================================================");
-        console.log("⚠️ [AVISO DA NUVEM] Supabase offline ou demorando. Modo de segurança do Render ATIVADO!");
-        console.log("Reason:", e.message);
+        console.log("⚠️ [AVISO DA NUVEM] Modo de Emergência Ativo.");
+        console.log("Motivo:", e.message);
         console.log("=======================================================");
         conectadoA_Nuvem = false;
     }
@@ -62,6 +68,7 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
         `, [nome, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
         return true;
     } catch (e) {
+        console.error("[Nuvem] Erro ao espelhar dados:", e.message);
         return false;
     }
 }
@@ -76,4 +83,9 @@ async function obterTodosOsUsuarios() {
     }
 }
 
-module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem, obterTodosOsUsuarios, isNuvemOnline: () => conectadoA_Nuvem };
+module.exports = { 
+    buscarUsuarioNaNuvem, 
+    salvarUsuarioNaNuvem, 
+    obterTodosOsUsuarios, 
+    isNuvemOnline: () => conectadoA_Nuvem 
+};
