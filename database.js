@@ -1,30 +1,42 @@
-const axios = require('axios');
+const { Client } = require('pg');
 
-// Nuvem Pública Livre com chave de acesso mestre gerada para o Reduto RP
-const BIN_ID = "66563db9ad19ca34f8717805"; 
-const API_KEY = "$2a$10$W2k9gG4XhR8hS19pXf3Y7uK2oG5y1z9wM7vE3r4t5y6u7i8o9p0qa";
+// 🔑 ESSA É A SUA LINHA DO SUPABASE! 
+// RELEMBRE: Apague a palavra SUA_SENHA_AQUI e digite a senha que você criou no Supabase.
+const connectionString = "postgresql://postgres.riqsfqhnfmerwvhidalp:SUA_SENHA_AQUI@aws-0-sa-east-1.pooler.supabase.com:5432/postgres";
 
-let dadosLocais = {};
+const client = new Client({
+    connectionString: connectionString,
+    connectionTimeoutMillis: 10000,
+    ssl: {
+        rejectUnauthorized: false // Permite que o Render e o Supabase conversem com segurança
+    }
+});
+
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Solicitando permissão de leitura na nuvem pública...");
+        console.log("[Nuvem Privada] Conectando à conta Supabase do Matheus...");
+        await client.connect();
+        conectadoA_Nuvem = true;
         
-        const resposta = await axios.get(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
-            headers: { 'X-Master-Key': API_KEY }
-        });
+        console.log("=======================================================");
+        console.log("✅ [SUPABASE] CONECTADO COM SUCESSO À SUA CONTA PRIVADA!");
+        console.log("=======================================================");
         
-        if (resposta.data && resposta.data.record) {
-            dadosLocais = resposta.data.record.players || {};
-            conectadoA_Nuvem = true;
-            console.log("=======================================================");
-            console.log("✅ [NUVEM] CONECTADO TOTALMENTE! PERMISSÃO DE ESCRITA E LEITURA LIBERADA!");
-            console.log("=======================================================");
-        }
+        // Cria a tabela de players no seu banco automaticamente se não existir
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS players (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                id INT,
+                last_pos REAL[]
+            );
+        `);
     } catch (e) {
         console.log("=======================================================");
-        console.log("⚠️ [AVISO] Nuvem travada. Rodando apenas com a memória do Render.");
+        console.log("⚠️ [Nuvem] Modo de Emergência Ativo. Verifique a senha inserida.");
+        console.log("Motivo:", e.message);
         console.log("=======================================================");
         conectadoA_Nuvem = false;
     }
@@ -32,35 +44,37 @@ async function conectar() {
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    const username = String(nome).trim().toLowerCase();
-    return dadosLocais[username] || null;
+    if (!conectadoA_Nuvem) return null;
+    try {
+        const res = await client.query('SELECT * FROM players WHERE username = $1', [String(nome).trim().toLowerCase()]);
+        if (res.rows.length > 0) {
+            const p = res.rows[0];
+            return { username: p.username, password: p.password, id: p.id, last_pos: p.last_pos };
+        }
+        return null;
+    } catch (e) { return null; }
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    const username = String(dadosJogador.username).trim().toLowerCase();
-    dadosLocais[username] = dadosJogador;
-
-    // Se a nuvem estiver ativa, o Render modifica o arquivo lá dentro na mesma hora
-    if (conectadoA_Nuvem) {
-        try {
-            await axios.put(`https://api.jsonbin.io/v3/b/${BIN_ID}`, { players: dadosLocais }, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Master-Key': API_KEY
-                }
-            });
-            console.log(`☁️ [Nuvem] Arquivo modificado na nuvem com sucesso para: ${username}`);
-            return true;
-        } catch (e) {
-            console.log("❌ [Nuvem Erro] Falha ao gravar modificação na nuvem:", e.message);
-            return false;
-        }
-    }
-    return true;
+    if (!conectadoA_Nuvem) return false;
+    try {
+        const nome = String(dadosJogador.username).trim().toLowerCase();
+        await client.query(`
+            INSERT INTO players (username, password, id, last_pos) 
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (username) 
+            DO UPDATE SET password = $2, id = $3, last_pos = $4;
+        `, [nome, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
+        return true;
+    } catch (e) { return false; }
 }
 
-async function obterTodosOsUsuarios() {
-    return Object.values(dadosLocais);
+async function obtenerTodosOsUsuarios() {
+    if (!conectadoA_Nuvem) return [];
+    try {
+        const res = await client.query('SELECT * FROM players');
+        return res.rows;
+    } catch (e) { return []; }
 }
 
 module.exports = { 
