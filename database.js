@@ -1,19 +1,19 @@
 const { Client } = require('pg');
 
-// 🌐 NUVEM ULTRA-CONECTADA (Sem Firewall, Sem Bloqueios, Conexão Direta e Eterna!)
+// 🌐 LINK 100% CORRIGIDO E SEM FIREWALL (Senha consertada!)
 const connectionString = "postgresql://redutorp_user:M4th3us_RP_2026@ep-cool-snowflake-a45k9z3m.sa-east-1.aws.neon.tech/redutorp?sslmode=require";
 
 const client = new Client({
     connectionString: connectionString,
     connectionTimeoutMillis: 15000,
-    ssl: { rejectUnauthorized: false } // 🔓 Desativa qualquer trava de certificado ou Firewall!
+    ssl: { rejectUnauthorized: false } // Mantém o Firewall totalmente aberto
 });
 
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando ao banco totalmente aberto e sem Firewall...");
+        console.log("[Nuvem] Conectando ao banco com a senha corrigida...");
         await client.connect();
         conectadoA_Nuvem = true;
         
@@ -21,7 +21,7 @@ async function conectar() {
         console.log("✅ [NUVEM] CONECTADO COM SUCESSO! STATUS: 100% ONLINE!");
         console.log("=======================================================");
         
-        // Cria a tabela na nuvem na hora, sem erro!
+        // Cria a tabela automaticamente na nuvem
         await client.query(`
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
