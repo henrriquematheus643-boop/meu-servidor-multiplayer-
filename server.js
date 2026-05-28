@@ -30,8 +30,8 @@ async function mostrarContasNoRender() {
     }
 }
 
-// Força a tabela a aparecer 4 segundos após ligar
-setTimeout(mostrarContasNoRender, 4000);
+// Mostra o painel após o boot
+setTimeout(mostrarContasNoRender, 5000);
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
@@ -55,13 +55,9 @@ wss.on('connection', (ws) => {
                     last_pos: [0, 2, 0]
                 };
 
-                // Envia para o MongoDB
                 await banco.salvarUsuarioNaNuvem(novoPlayer);
-                
-                // Responde o Godot
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
                 
-                // Atualiza o painel do Render na mesma hora
                 setTimeout(mostrarContasNoRender, 1000);
                 return;
             }
@@ -94,7 +90,6 @@ wss.on('connection', (ws) => {
                     const contaAtual = await banco.buscarUsuarioNaNuvem(username);
                     if (contaAtual) {
                         contaAtual.last_pos = dados.pos;
-                        // Sobrescreve na nuvem com a nova localização
                         await banco.salvarUsuarioNaNuvem(contaAtual);
                     }
                 }
