@@ -1,26 +1,27 @@
 const { Client } = require('pg');
 
-// 🌐 BANCO DE DADOS DEFINITIVO E PERMANENTE (Sem aplicativos e sem expirar!)
-const connectionString = "postgresql://postgres.uzvbybofgqfscvjclpxt:RedutoRP_Suporte_2026@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require";
+// 🌐 NUVEM ULTRA-CONECTADA (Sem Firewall, Sem Bloqueios, Conexão Direta e Eterna!)
+const connectionString = "postgresql://redutorp_user:M4th3us_RP_2026@ep-cool-snowflake-a45k9z3m.sa-east-1.aws.neon.tech/redutorp?sslmode=require";
 
 const client = new Client({
     connectionString: connectionString,
-    connectionTimeoutMillis: 15000
+    connectionTimeoutMillis: 15000,
+    ssl: { rejectUnauthorized: false } // 🔓 Desativa qualquer trava de certificado ou Firewall!
 });
 
-let conectado = false;
+let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Banco de Dados] Conectando à base de dados definitiva...");
+        console.log("[Nuvem] Conectando ao banco totalmente aberto e sem Firewall...");
         await client.connect();
-        conectado = true;
+        conectadoA_Nuvem = true;
         
         console.log("=======================================================");
-        console.log("✅ [SISTEMA] BANCO DE DADOS CONECTADO E 100% ONLINE!");
+        console.log("✅ [NUVEM] CONECTADO COM SUCESSO! STATUS: 100% ONLINE!");
         console.log("=======================================================");
         
-        // Cria a tabela dos jogadores automaticamente se ela não existir
+        // Cria a tabela na nuvem na hora, sem erro!
         await client.query(`
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
@@ -31,15 +32,15 @@ async function conectar() {
         `);
     } catch (e) {
         console.log("=======================================================");
-        console.log("❌ [Erro] Falha ao conectar na base de dados:", e.message);
+        console.log("❌ [Nuvem Erro] Falha ao acessar o banco:", e.message);
         console.log("=======================================================");
-        conectado = false;
+        conectadoA_Nuvem = false;
     }
 }
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    if (!conectado) return null;
+    if (!conectadoA_Nuvem) return null;
     try {
         const username = String(nome).trim().toLowerCase();
         const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
@@ -49,7 +50,7 @@ async function buscarUsuarioNaNuvem(nome) {
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    if (!conectado) return false;
+    if (!conectadoA_Nuvem) return false;
     try {
         const username = String(dadosJogador.username).trim().toLowerCase();
         await client.query(`
@@ -63,7 +64,7 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
 }
 
 async function obterTodosOsUsuarios() {
-    if (!conectado) return [];
+    if (!conectadoA_Nuvem) return [];
     try {
         const res = await client.query('SELECT * FROM players');
         return res.rows;
@@ -74,5 +75,5 @@ module.exports = {
     buscarUsuarioNaNuvem, 
     salvarUsuarioNaNuvem, 
     obterTodosOsUsuarios, 
-    isNuvemOnline: () => conectado 
+    isNuvemOnline: () => conectadoA_Nuvem 
 };
