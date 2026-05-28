@@ -4,28 +4,21 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Game Rubi] Inicializando Servidor com Painel de Monitoramento...");
+console.log("[Game Rubi] Servidor Reduto RP - Banco Interno Blindado Ativado!");
 
-// --- FUNÇÃO SECRETA: BUSCA AS CONTAS NA NUVEM E MOSTRA NO LOG DO RENDER ---
+// --- PAINEL DE MONITORAMENTO COPIADO DIRETO NO LOG DO RENDER ---
 async function mostrarContasNoRender() {
     try {
-        // Puxa do banco a coleção inteira para listar
-        const { MongoClient } = require('mongodb');
-        const uri = "mongodb://redutorp:rp123@cluster0-shard-00-00.v8k3m.mongodb.net:27017,cluster0-shard-00-01.v8k3m.mongodb.net:27017,cluster0-shard-00-02.v8k3m.mongodb.net:27017/reduto_rp?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
-        const clienteTemporario = new MongoClient(uri);
-        await clienteTemporario.connect();
-        const dados = await clienteTemporario.db("reduto_rp").collection("usuarios_permanentes").find({}).toArray();
-        await clienteTemporario.close();
+        const dados = await banco.obterTodosOsUsuarios();
 
         console.log("\n=======================================================");
-        console.log(`📊 [PAINEL REDUTO RP] CONTAS SALVAS NA NUVEM MONGODB (${dados.length})`);
+        console.log(`📊 [PAINEL REDUTO RP] CONTAS SALVAS NO BANCO LOCAL (${dados.length})`);
         console.log("=======================================================");
         
         if (dados.length === 0) {
             console.log(" [!] Nenhuma conta criada ainda. Aguardando jogadores...");
         } else {
             dados.forEach((player, index) => {
-                // Filtra para não mostrar lixo de sistema, apenas contas reais dos players
                 if (player.username) {
                     console.log(`${index + 1}. 👤 PLAYER: ${player.username} | 🔑 SENHA: ${player.password} | 🆔 ID: ${player.id || 'Sem ID'} | 📍 POSIÇÃO: [${player.last_pos ? player.last_pos.join(', ') : '0, 2, 0'}]`);
                 }
@@ -33,12 +26,12 @@ async function mostrarContasNoRender() {
         }
         console.log("=======================================================\n");
     } catch (e) {
-        console.log("[Painel Erro] Não foi possível renderizar a lista de contas: ", e.message);
+        console.log("[Painel Erro] Não foi possível renderizar a lista: ", e.message);
     }
 }
 
-// Aciona o painel assim que o servidor liga para você ver o que já tem lá
-setTimeout(mostrarContasNoRender, 5000);
+// Mostra o painel assim que liga
+setTimeout(mostrarContasNoRender, 2000);
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
@@ -65,8 +58,8 @@ wss.on('connection', (ws) => {
                 await banco.salvarUsuarioNaNuvem(novoPlayer);
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
                 
-                // Atualiza o painel do Render na mesma hora para você ver a conta surgir lá!
-                setTimeout(mostrarContasNoRender, 1500);
+                // Atualiza a tabela no log na hora
+                setTimeout(mostrarContasNoRender, 500);
                 return;
             }
 
