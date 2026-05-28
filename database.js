@@ -1,67 +1,73 @@
-const axios = require('axios');
+const { Client } = require('pg');
 
-// 🌐 NUVEM ULTRA RÁPIDA (KVBin) - Sem Firewall, sem bloqueios e ativa na hora!
-const BUCKET_ID = "redutorp_matheus_db";
-let dadosLocais = {};
+// 🔑 COLE SEU LINK INTERNO DO RENDER ABAIXO:
+// Substitua todo o link abaixo pelo "Internal Database URL" que você copiou lá no painel do Render!
+const connectionString = "postgresql://postgres:SUA_SENHA_INTERNA@dpg-xxxxxxxxx-a:5432/postgres";
+
+const client = new Client({
+    connectionString: connectionString,
+    connectionTimeoutMillis: 10000
+});
+
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando ao servidor seguro da KVBin...");
-        
-        // Tenta puxar os dados dos jogadores salvos
-        const resposta = await axios.get(`https://kvbin.com/api/v1/storage/${BUCKET_ID}`);
-        
-        if (resposta.data) {
-            dadosLocais = resposta.data.players || {};
-        }
+        console.log("[Nuvem Interna] Conectando ao banco de dados do próprio Render...");
+        await client.connect();
         conectadoA_Nuvem = true;
+        
         console.log("=======================================================");
-        console.log("✅ [NUVEM KV] CONECTADO COM SUCESSO! STATUS: 100% ONLINE!");
+        console.log("✅ [BANCO LOCAL] CONECTADO COM SUCESSO! 100% ONLINE!");
         console.log("=======================================================");
+        
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS players (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                id INT,
+                last_pos REAL[]
+            );
+        `);
     } catch (e) {
-        // Se a gaveta estiver vazia porque é a primeira vez, ele considera online e cria os dados
-        if (e.response && (e.response.status === 404 || e.response.status === 422)) {
-            dadosLocais = {};
-            conectadoA_Nuvem = true;
-            console.log("=======================================================");
-            console.log("✅ [NUVEM KV] BANCO INICIALIZADO COM SUCESSO! ONLINE!");
-            console.log("=======================================================");
-        } else {
-            console.log("=======================================================");
-            console.log("❌ [Nuvem Erro] Falha ao acessar KVBin:", e.message);
-            console.log("=======================================================");
-            conectadoA_Nuvem = false;
-        }
+        console.log("=======================================================");
+        console.log("❌ [Erro] Falha ao conectar no banco interno:", e.message);
+        console.log("=======================================================");
+        conectadoA_Nuvem = false;
     }
 }
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    const username = String(nome).trim().toLowerCase();
-    return dadosLocais[username] || null;
+    if (!conectadoA_Nuvem) return null;
+    try {
+        const username = String(nome).trim().toLowerCase();
+        const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
+        if (res.rows.length > 0) return res.rows[0];
+        return null;
+    } catch (e) { return null; }
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    const username = String(dadosJogador.username).trim().toLowerCase();
-    dadosLocais[username] = dadosJogador;
-
-    if (conectadoA_Nuvem) {
-        try {
-            // Salva e atualiza na nuvem instantaneamente
-            await axios.post(`https://kvbin.com/api/v1/storage/${BUCKET_ID}`, { players: dadosLocais });
-            console.log(`☁️ [Nuvem] Dados salvos para o jogador: ${username}`);
-            return true;
-        } catch (e) {
-            console.log("❌ [Nuvem Erro] Erro ao sincronizar:", e.message);
-            return false;
-        }
-    }
-    return true;
+    if (!conectadoA_Nuvem) return false;
+    try {
+        const username = String(dadosJogador.username).trim().toLowerCase();
+        await client.query(`
+            INSERT INTO players (username, password, id, last_pos) 
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (username) 
+            DO UPDATE SET password = $2, id = $3, last_pos = $4;
+        `, [username, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
+        return true;
+    } catch (e) { return false; }
 }
 
-async function obterTodosOsUsuarios() {
-    return Object.values(dadosLocais);
+async function obtenerTodosOsUsuarios() {
+    if (!conectadoA_Nuvem) return [];
+    try {
+        const res = await client.query('SELECT * FROM players');
+        return res.rows;
+    } catch (e) { return []; }
 }
 
 module.exports = { 
