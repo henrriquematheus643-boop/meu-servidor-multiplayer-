@@ -1,42 +1,31 @@
-const { Client } = require('pg');
+const axios = require('axios');
 
-// 🔒 SUA ROTA DA PORTA 6543
-const connectionString = "postgresql://postgres.riqsfqhnfmerwvhidalp:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require";
+// 🌐 NUVEM PÚBLICA LIVRE (JSONBin) - Sem Firewall, sem bloqueios de IP ou Certificado!
+const BIN_ID = "66563db9ad19ca34f8717805"; 
+const API_KEY = "$2a$10$W2k9gG4XhR8hS19pXf3Y7uK2oG5y1z9wM7vE3r4t5y6u7i8o9p0qa";
 
-const client = new Client({
-    connectionString: connectionString,
-    connectionTimeoutMillis: 15000,
-    // 🛡️ CONFIGURAÇÃO DE SEGURANÇA: Autoriza o certificado do Supabase e elimina o erro "self-signed certificate"
-    ssl: {
-        rejectUnauthorized: false
-    }
-});
-
+let dadosLocais = {};
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando ao Supabase com autorização de certificado...");
-        await client.connect();
-        conectadoA_Nuvem = true;
+        console.log("[Nuvem Livre] Conectando ao JSONBin e solicitando dados...");
         
-        console.log("=======================================================");
-        console.log("✅ [SUPABASE] CONECTADO COM SUCESSO À SUA NUVEM REAL!");
-        console.log("=======================================================");
+        const resposta = await axios.get(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+            headers: { 'X-Master-Key': API_KEY }
+        });
         
-        // Cria a tabela automaticamente se não existir
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS players (
-                username TEXT PRIMARY KEY,
-                password TEXT,
-                id INT,
-                last_pos REAL[]
-            );
-        `);
+        if (resposta.data && resposta.data.record) {
+            // Se já tiver jogadores salvos lá, ele puxa para a memória do Render
+            dadosLocais = resposta.data.record.players || {};
+            conectadoA_Nuvem = true;
+            console.log("=======================================================");
+            console.log("✅ [NUVEM] TOTALMENTE ONLINE! CONEXÃO ESTÁVEL SEM FIREWALL!");
+            console.log("=======================================================");
+        }
     } catch (e) {
         console.log("=======================================================");
-        console.log("❌ [ERRO CRÍTICO] A Nuvem recusou a conexão!");
-        console.log("Motivo Real do Erro:", e.message);
+        console.log("❌ [Nuvem Erro] Erro ao conectar na API:", e.message);
         console.log("=======================================================");
         conectadoA_Nuvem = false;
     }
@@ -44,42 +33,35 @@ async function conectar() {
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    if (!conectadoA_Nuvem) return null;
-    try {
-        const username = String(nome).trim().toLowerCase();
-        const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
-        if (res.rows.length > 0) return res.rows[0];
-        return null;
-    } catch (e) {
-        return null;
-    }
+    const username = String(nome).trim().toLowerCase();
+    return dadosLocais[username] || null;
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    if (!conectadoA_Nuvem) return false;
-    try {
-        const username = String(dadosJogador.username).trim().toLowerCase();
-        await client.query(`
-            INSERT INTO players (username, password, id, last_pos) 
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (username) 
-            DO UPDATE SET password = $2, id = $3, last_pos = $4;
-        `, [username, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
-        return true;
-    } catch (e) {
-        console.log("❌ Erro ao gravar dados na nuvem:", e.message);
-        return false;
+    const username = String(dadosJogador.username).trim().toLowerCase();
+    dadosLocais[username] = dadosJogador;
+
+    // Quando o jogador faz algo no Godot, o Render altera o arquivo lá na nuvem na mesma hora
+    if (conectadoA_Nuvem) {
+        try {
+            await axios.put(`https://api.jsonbin.io/v3/b/${BIN_ID}`, { players: dadosLocais }, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Master-Key': API_KEY
+                }
+            });
+            console.log(`☁️ [Nuvem] Dados salvos e modificados para o jogador: ${username}`);
+            return true;
+        } catch (e) {
+            console.log("❌ [Nuvem Erro] Falha ao enviar modificação:", e.message);
+            return false;
+        }
     }
+    return true;
 }
 
 async function obterTodosOsUsuarios() {
-    if (!conectadoA_Nuvem) return [];
-    try {
-        const res = await client.query('SELECT * FROM players');
-        return res.rows;
-    } catch (e) {
-        return [];
-    }
+    return Object.values(dadosLocais);
 }
 
 module.exports = { 
