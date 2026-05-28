@@ -1,72 +1,75 @@
-const { Client } = require('pg');
+const mysql = require('mysql2/promise');
 
-// 🔑 COLE SEU LINK INTERNO DO RENDER ABAIXO:
-// Substitua todo o link abaixo pelo "Internal Database URL" que você copiou lá no painel do Render!
-const connectionString = "postgresql://postgres:SUA_SENHA_INTERNA@dpg-xxxxxxxxx-a:5432/postgres";
+// 🔑 CONFIGURAÇÃO DO SEU CELULAR BANCO DE DADOS:
+// Substitua o IP_DO_SEU_CELULAR pelo IP real do seu Wi-Fi (Ex: 192.168.1.15)
+const dbConfig = {
+    host: '192.168.18.135', 
+    port: 3306,
+    user: 'root',
+    password: '', // Deixamos sem senha para facilitar no Termux
+    database: 'redutorp',
+    connectTimeout: 15000
+};
 
-const client = new Client({
-    connectionString: connectionString,
-    connectionTimeoutMillis: 10000
-});
-
-let conectadoA_Nuvem = false;
+let pool = null;
+let conectadoAoCelular = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem Interna] Conectando ao banco de dados do próprio Render...");
-        await client.connect();
-        conectadoA_Nuvem = true;
+        console.log("[Celular DB] Tentando conectar ao banco de dados no celular do Matheus...");
+        pool = mysql.createPool(dbConfig);
+        
+        // Testa a conexão
+        const [rows] = await pool.query('SELECT 1');
+        conectadoAoCelular = true;
         
         console.log("=======================================================");
-        console.log("✅ [BANCO LOCAL] CONECTADO COM SUCESSO! 100% ONLINE!");
+        console.log("✅ [SISTEMA PRIVADO] CONECTADO AO BANCO DO SEU CELULAR!");
         console.log("=======================================================");
-        
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS players (
-                username TEXT PRIMARY KEY,
-                password TEXT,
-                id INT,
-                last_pos REAL[]
-            );
-        `);
     } catch (e) {
         console.log("=======================================================");
-        console.log("❌ [Erro] Falha ao conectar no banco interno:", e.message);
+        console.log("❌ [Erro] Não foi possível alcançar o seu celular:", e.message);
+        console.log("DICA: Certifique-se de que o Termux está aberto e o comando mysqld_safe rodando.");
         console.log("=======================================================");
-        conectadoA_Nuvem = false;
+        conectadoAoCelular = false;
     }
 }
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    if (!conectadoA_Nuvem) return null;
+    if (!conectadoAoCelular) return null;
     try {
         const username = String(nome).trim().toLowerCase();
-        const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
-        if (res.rows.length > 0) return res.rows[0];
+        const [rows] = await pool.query('SELECT * FROM players WHERE username = ?', [username]);
+        if (rows.length > 0) {
+            const p = rows[0];
+            // Converte a posição de texto de volta para array
+            return { username: p.username, password: p.password, id: p.id, last_pos: JSON.parse(p.last_pos || '[]') };
+        }
         return null;
     } catch (e) { return null; }
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    if (!conectadoA_Nuvem) return false;
+    if (!conectadoAoCelular) return false;
     try {
         const username = String(dadosJogador.username).trim().toLowerCase();
-        await client.query(`
+        const posTexto = JSON.stringify(dadosJogador.last_pos || []);
+        
+        await pool.query(`
             INSERT INTO players (username, password, id, last_pos) 
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (username) 
-            DO UPDATE SET password = $2, id = $3, last_pos = $4;
-        `, [username, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE password = ?, id = ?, last_pos = ?
+        `, [username, dadosJogador.password, dadosJogador.id, posTexto, dadosJogador.password, dadosJogador.id, posTexto]);
         return true;
     } catch (e) { return false; }
 }
 
-async function obtenerTodosOsUsuarios() {
-    if (!conectadoA_Nuvem) return [];
+async function obterTodosOsUsuarios() {
+    if (!conectadoAoCelular) return [];
     try {
-        const res = await client.query('SELECT * FROM players');
-        return res.rows;
+        const [rows] = await pool.query('SELECT * FROM players');
+        return rows.map(p => ({ username: p.username, password: p.password, id: p.id, last_pos: JSON.parse(p.last_pos || '[]') }));
     } catch (e) { return []; }
 }
 
@@ -74,5 +77,5 @@ module.exports = {
     buscarUsuarioNaNuvem, 
     salvarUsuarioNaNuvem, 
     obterTodosOsUsuarios, 
-    isNuvemOnline: () => conectadoA_Nuvem 
+    isNuvemOnline: () => conectadoAoCelular 
 };
