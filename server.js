@@ -4,19 +4,16 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Game Rubi] Servidor Reduto RP Online - Roteamento MongoDB Ativado!");
+console.log("[Game Rubi] Inicializando Servidor Blindado do Reduto RP...");
 
-// --- PAINEL DE MONITORAMENTO NO LOG DO RENDER ---
 async function mostrarContasNoRender() {
     try {
         const dados = await banco.obterTodosOsUsuarios();
-
         console.log("\n=======================================================");
-        console.log(`📊 [PAINEL NUVEM MONGODB] CONTAS ENCONTRADAS (${dados.length})`);
+        console.log(`📊 [PAINEL NUVEM] JOGADORES CADASTRADOS (${dados.length})`);
         console.log("=======================================================");
-        
         if (dados.length === 0) {
-            console.log(" [!] Nuvem vazia. Aguardando o primeiro registro no Godot...");
+            console.log(" [!] Banco de dados limpo. Aguardando registros...");
         } else {
             dados.forEach((player, index) => {
                 if (player.username) {
@@ -26,19 +23,18 @@ async function mostrarContasNoRender() {
         }
         console.log("=======================================================\n");
     } catch (e) {
-        console.log("[Painel Erro] Erro ao desenhar tabela: ", e.message);
+        console.log("[Painel] Aguardando sincronização completa da nuvem...");
     }
 }
 
-// Mostra o painel após o boot
-setTimeout(mostrarContasNoRender, 5000);
+// Ativa a listagem automática
+setTimeout(mostrarContasNoRender, 6000);
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
         try {
             const dados = JSON.parse(message);
             
-            // --- 1. AÇÃO: REGISTRAR ---
             if (dados.action === "register") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
@@ -57,12 +53,10 @@ wss.on('connection', (ws) => {
 
                 await banco.salvarUsuarioNaNuvem(novoPlayer);
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
-                
                 setTimeout(mostrarContasNoRender, 1000);
                 return;
             }
 
-            // --- 2. AÇÃO: LOGIN ---
             if (dados.action === "login") {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
@@ -82,10 +76,8 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            // --- 3. AÇÃO: SALVAR POSIÇÃO ---
             if (dados.action === "save_position") {
                 const username = String(dados.username).trim();
-                
                 if (username && dados.pos) {
                     const contaAtual = await banco.buscarUsuarioNaNuvem(username);
                     if (contaAtual) {
@@ -96,13 +88,19 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            // --- 4. TRANSMISSÃO MULTIPLAYER ---
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
                 }
             });
 
-        } catch (erro) {}
+        } catch (erro) {
+            // Protege o servidor contra quedas por pacotes corrompidos do Godot
+        }
     });
+});
+
+// Mantém o processo do Node ativo mesmo se houver erros não capturados na nuvem
+process.on('uncaughtException', (err) => {
+    console.log('[Aviso Seguro] Erro ignorado para evitar crash:', err.message);
 });
