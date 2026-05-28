@@ -1,19 +1,18 @@
 const { Client } = require('pg');
 
-// 🔑 LINHA DE CONEXÃO EXCLUSIVA DO MATHEUS COM A SENHA INSERIDA
-const connectionString = "postgresql://postgres:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?options=-c%20project%3Driqsfqhnfmerwvhidalp";
+// 🔒 NOVA ROTA COM PORTA 6543 (POOLER) - Evita bloqueios do Render com o Supabase
+const connectionString = "postgresql://postgres.riqsfqhnfmerwvhidalp:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require";
 
 const client = new Client({
     connectionString: connectionString,
-    connectionTimeoutMillis: 10000, 
-    ssl: { rejectUnauthorized: false } // Permite que o Render passe pela segurança do Supabase
+    connectionTimeoutMillis: 15000, // Dá mais tempo para o banco responder
 });
 
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando diretamente ao banco Supabase do Matheus...");
+        console.log("[Nuvem] Conectando ao Supabase via Porta Segura 6543...");
         await client.connect();
         conectadoA_Nuvem = true;
         
@@ -21,7 +20,7 @@ async function conectar() {
         console.log("✅ [SUPABASE] CONECTADO COM SUCESSO À SUA NUVEM REAL!");
         console.log("=======================================================");
         
-        // Cria a tabela de players na sua conta se ela não existir
+        // Cria a tabela automaticamente se não existir
         await client.query(`
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
@@ -33,7 +32,7 @@ async function conectar() {
     } catch (e) {
         console.log("=======================================================");
         console.log("❌ [ERRO CRÍTICO] A Nuvem recusou a conexão!");
-        console.log("Motivo:", e.message);
+        console.log("Motivo Real do Erro:", e.message);
         console.log("=======================================================");
         conectadoA_Nuvem = false;
     }
