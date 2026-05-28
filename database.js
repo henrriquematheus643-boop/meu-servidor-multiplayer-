@@ -1,70 +1,79 @@
-const { MongoClient } = require('mongodb');
+const { Client } = require('pg');
 
-// ROTA HÍBRIDA BLINDADA: Conecta direto nos servidores dedicados do MongoDB Atlas
-// Esse formato elimina o erro 'ENOTFOUND' no Render e garante conexão estável e vitalícia.
-const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
+// Link da NOVA nuvem Supabase configurada exclusivamente para o Reduto RP
+const connectionString = "postgresql://postgres.v8k3m.supabase.co:5432/postgres?user=postgres.v8k3m&password=RedutoRP123456";
 
-const client = new MongoClient(uri);
+const client = new Client({
+    connectionString: connectionString,
+    connectionTimeoutMillis: 10000
+});
 
-let db = null;
-let colecao = null;
+let conectado = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Iniciando protocolo de conexão direta...");
-        
-        // Força o Node.js a se conectar e aguarda a resposta da nuvem
+        console.log("[Nuvem Supabase] Conectando ao banco de dados estável...");
         await client.connect();
-        
-        db = client.db("reduto_data");
-        colecao = db.collection("players");
-        
+        conectado = true;
         console.log("=======================================================");
-        console.log("✅ [MONGODB] CONECTADO TOTALMENTE COM SUCESSO À NUVEM!");
+        console.log("✅ [SUPABASE] CONECTADO TOTALMENTE COM SUCESSO À NUVEM!");
         console.log("=======================================================");
+        
+        // Cria a tabela de jogadores automaticamente se ela não existir
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS players (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                id INT,
+                last_pos REAL[]
+            );
+        `);
     } catch (e) {
-        console.error("❌ [MONGODB ERRO CRÍTICO] Falha ao conectar na nuvem:", e.message);
+        console.error("❌ [SUPABASE ERRO CRÍTICO] Falha ao conectar na nuvem:", e.message);
     }
 }
-
-// Executa a conexão assim que o servidor liga
 conectar();
 
-// Função para buscar o jogador na nuvem (usada no Login e na checagem de Registro)
+// Busca o jogador pelo nome na nova nuvem
 async function buscarUsuarioNaNuvem(nome) {
+    if (!conectado) return null;
     try {
-        if (!colecao) return null;
-        return await colecao.findOne({ username: String(nome).trim().toLowerCase() });
+        const res = await client.query('SELECT * FROM players WHERE username = $1', [String(nome).trim().toLowerCase()]);
+        if (res.rows.length > 0) {
+            const p = res.rows[0];
+            return { username: p.username, password: p.password, id: p.id, last_pos: p.last_pos };
+        }
+        return null;
     } catch (e) {
-        console.error("[Nuvem Erro] Falha ao buscar usuário:", e.message);
+        console.error("[Supabase Erro] Falha ao buscar:", e.message);
         return null;
     }
 }
 
-// Função para salvar ou atualizar o jogador (usada no Registro e ao Salvar Posição)
+// Grava ou atualiza o jogador na nuvem (Insere ou Atualiza se já existir)
 async function salvarUsuarioNaNuvem(dadosJogador) {
+    if (!conectado) return false;
     try {
-        if (!colecao) return false;
         const nome = String(dadosJogador.username).trim().toLowerCase();
-        
-        // Atualiza se já existir ou cria uma nova se for registro (upsert: true)
-        await colecao.updateOne(
-            { username: nome },
-            { $set: dadosJogador },
-            { upsert: true }
-        );
+        await client.query(`
+            INSERT INTO players (username, password, id, last_pos) 
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (username) 
+            DO UPDATE SET password = $2, id = $3, last_pos = $4;
+        `, [nome, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
         return true;
     } catch (e) {
-        console.error("[Nuvem Erro] O banco de dados rejeitou a gravação:", e.message);
+        console.error("[Supabase Erro] Falha real ao gravar dados:", e.message);
         return false;
     }
 }
 
-// Função que puxa todos os players para listar no painel do Render
+// Puxa a lista completa para o painel do Render ler
 async function obterTodosOsUsuarios() {
+    if (!conectado) return [];
     try {
-        if (!colecao) return [];
-        return await colecao.find({}).toArray();
+        const res = await client.query('SELECT * FROM players');
+        return res.rows;
     } catch (e) {
         return [];
     }
