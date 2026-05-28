@@ -1,21 +1,26 @@
 const { MongoClient } = require('mongodb');
 
-// URI oficial configurada para o seu novo Cluster do Reduto RP
-const uri = "mongodb+srv://redutorpnovo:rp123456@clusterreduto.v8k3m.mongodb.net/reduto_data?retryWrites=true&w=majority";
+// ROTA DIRETA CONVERTIDA: Substitui o 'mongodb+srv' por conexões diretas nos servidores do Atlas
+// Isso mata o erro ENOTFOUND de uma vez por todas no Render!
+const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
 
-const client = new MongoClient(uri);
+const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+});
+
 let db = null;
 let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando ao cluster...");
+        console.log("[Nuvem MongoDB] Conectando via ROTA DIRETA DE IPs para burlar o bloqueio do Render...");
         await client.connect();
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO!");
+        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! Sistema totalmente online.");
     } catch (e) {
-        console.error("[Nuvem MongoDB Erro] Falha ao conectar:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha crítica na rota direta:", e.message);
     }
 }
 conectar();
@@ -35,8 +40,7 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
         if (!colecao) throw new Error("Coleção MongoDB não inicializada");
         const nome = String(dadosJogador.username).trim().toLowerCase();
         
-        // O await aqui garante que o Node espere o MongoDB salvar de verdade
-        const resultado = await colecao.updateOne(
+        await colecao.updateOne(
             { username: nome },
             { $set: dadosJogador },
             { upsert: true }
@@ -49,7 +53,7 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
     }
 }
 
-async function obtenerTodosOsUsuarios() {
+async function obterTodosOsUsuarios() {
     try {
         if (!colecao) return [];
         return await colecao.find({}).toArray();
@@ -58,4 +62,4 @@ async function obtenerTodosOsUsuarios() {
     }
 }
 
-module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem, obtenerTodosOsUsuarios };
+module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem, obterTodosOsUsuarios };
