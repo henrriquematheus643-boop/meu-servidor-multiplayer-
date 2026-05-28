@@ -4,19 +4,19 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-console.log("[Game Rubi] Servidor Reduto RP - Banco Interno Blindado Ativado!");
+console.log("[Game Rubi] Servidor Reduto RP Online - Roteamento MongoDB Ativado!");
 
-// --- PAINEL DE MONITORAMENTO COPIADO DIRETO NO LOG DO RENDER ---
+// --- PAINEL DE MONITORAMENTO NO LOG DO RENDER ---
 async function mostrarContasNoRender() {
     try {
         const dados = await banco.obterTodosOsUsuarios();
 
         console.log("\n=======================================================");
-        console.log(`📊 [PAINEL REDUTO RP] CONTAS SALVAS NO BANCO LOCAL (${dados.length})`);
+        console.log(`📊 [PAINEL NUVEM MONGODB] CONTAS ENCONTRADAS (${dados.length})`);
         console.log("=======================================================");
         
         if (dados.length === 0) {
-            console.log(" [!] Nenhuma conta criada ainda. Aguardando jogadores...");
+            console.log(" [!] Nuvem vazia. Aguardando o primeiro registro no Godot...");
         } else {
             dados.forEach((player, index) => {
                 if (player.username) {
@@ -26,12 +26,12 @@ async function mostrarContasNoRender() {
         }
         console.log("=======================================================\n");
     } catch (e) {
-        console.log("[Painel Erro] Não foi possível renderizar a lista: ", e.message);
+        console.log("[Painel Erro] Erro ao desenhar tabela: ", e.message);
     }
 }
 
-// Mostra o painel assim que liga
-setTimeout(mostrarContasNoRender, 2000);
+// Força a tabela a aparecer 4 segundos após ligar
+setTimeout(mostrarContasNoRender, 4000);
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
@@ -55,11 +55,14 @@ wss.on('connection', (ws) => {
                     last_pos: [0, 2, 0]
                 };
 
+                // Envia para o MongoDB
                 await banco.salvarUsuarioNaNuvem(novoPlayer);
+                
+                // Responde o Godot
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
                 
-                // Atualiza a tabela no log na hora
-                setTimeout(mostrarContasNoRender, 500);
+                // Atualiza o painel do Render na mesma hora
+                setTimeout(mostrarContasNoRender, 1000);
                 return;
             }
 
@@ -91,13 +94,14 @@ wss.on('connection', (ws) => {
                     const contaAtual = await banco.buscarUsuarioNaNuvem(username);
                     if (contaAtual) {
                         contaAtual.last_pos = dados.pos;
+                        // Sobrescreve na nuvem com a nova localização
                         await banco.salvarUsuarioNaNuvem(contaAtual);
                     }
                 }
                 return;
             }
 
-            // --- 4. MULTIPLAYER ---
+            // --- 4. TRANSMISSÃO MULTIPLAYER ---
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
@@ -107,4 +111,3 @@ wss.on('connection', (ws) => {
         } catch (erro) {}
     });
 });
-
