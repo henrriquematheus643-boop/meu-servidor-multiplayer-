@@ -1,26 +1,21 @@
 const { MongoClient } = require('mongodb');
 
-// Link oficial simplificado com travas de segurança para o Render não se perder
-const uri = "mongodb+srv://redutorpnovo:rp123456@clusterreduto.v8k3m.mongodb.net/reduto_data?retryWrites=true&w=majority";
+// Alterado o protocolo para 'mongodb://' com os nós diretos para blindar contra o ENOTFOUND do Render
+const uri = "mongodb://redutorpnovo:rp123456@clusterreduto-shard-00-00.v8k3m.mongodb.net:27017,clusterreduto-shard-00-01.v8k3m.mongodb.net:27017,clusterreduto-shard-00-02.v8k3m.mongodb.net:27017/reduto_data?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
 
-const client = new MongoClient(uri, {
-    connectTimeoutMS: 10000, // Espera até 10 segundos para conectar sem derrubar o servidor
-    socketTimeoutMS: 45000,
-});
-
+const client = new MongoClient(uri);
 let db = null;
 let colecao = null;
 
 async function conectar() {
     try {
-        console.log("[Nuvem MongoDB] Conectando ao banco de dados...");
+        console.log("[Nuvem MongoDB] Conectando ao banco de dados seguro...");
         await client.connect();
         db = client.db("reduto_data");
         colecao = db.collection("players");
-        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! Sistema pronto.");
+        console.log("[Nuvem MongoDB] CONECTADO COM SUCESSO! Sistema pronto para receber jogadores.");
     } catch (e) {
-        // Se der erro, avisa no log, mas NÃO derruba o servidor!
-        console.error("[Nuvem MongoDB Erro] Não foi possível conectar agora, operando em modo de espera:", e.message);
+        console.error("[Nuvem MongoDB Erro] Falha na conexão de segurança:", e.message);
     }
 }
 conectar();
