@@ -4,34 +4,41 @@ const banco = require('./database.js');
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-let usuariosCadastrados = {};
-let bancoCarregado = false; // Trava de segurança
+console.log("[Game Rubi] Inicializando Servidor com Painel de Monitoramento...");
 
-// Função corrigida: Só libera o servidor DEPOIS de puxar os dados da nuvem
-async function iniciarServidorComNuvem() {
-    console.log("[Game Rubi] Iniciando conexão com o MongoDB...");
-    
-    // Tenta carregar os dados em um loop até conseguir se conectar à nuvem
-    for (let tentativa = 1; tentativa <= 5; tentativa++) {
-        try {
-            usuariosCadastrados = await banco.carregarTodosOsUsuarios();
-            
-            // Se encontrou dados ou pelo menos conectou sem erro
-            bancoCarregado = true;
-            console.log(`[Game Rubi] SUCESSO! Nuvem sincronizada na tentativa ${tentativa}. ${Object.keys(usuariosCadastrados).length} contas prontas.`);
-            break;
-        } catch (erro) {
-            console.log(`[Game Rubi] Aguardando nuvem... Tentativa ${tentativa}/5`);
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Espera 3 segundos antes de tentar de novo
+// --- FUNÇÃO SECRETA: BUSCA AS CONTAS NA NUVEM E MOSTRA NO LOG DO RENDER ---
+async function mostrarContasNoRender() {
+    try {
+        // Puxa do banco a coleção inteira para listar
+        const { MongoClient } = require('mongodb');
+        const uri = "mongodb://redutorp:rp123@cluster0-shard-00-00.v8k3m.mongodb.net:27017,cluster0-shard-00-01.v8k3m.mongodb.net:27017,cluster0-shard-00-02.v8k3m.mongodb.net:27017/reduto_rp?ssl=true&replicaSet=atlas-v8k3m-shard-0&authSource=admin&retryWrites=true&w=majority";
+        const clienteTemporario = new MongoClient(uri);
+        await clienteTemporario.connect();
+        const dados = await clienteTemporario.db("reduto_rp").collection("usuarios_permanentes").find({}).toArray();
+        await clienteTemporario.close();
+
+        console.log("\n=======================================================");
+        console.log(`📊 [PAINEL REDUTO RP] CONTAS SALVAS NA NUVEM MONGODB (${dados.length})`);
+        console.log("=======================================================");
+        
+        if (dados.length === 0) {
+            console.log(" [!] Nenhuma conta criada ainda. Aguardando jogadores...");
+        } else {
+            dados.forEach((player, index) => {
+                // Filtra para não mostrar lixo de sistema, apenas contas reais dos players
+                if (player.username) {
+                    console.log(`${index + 1}. 👤 PLAYER: ${player.username} | 🔑 SENHA: ${player.password} | 🆔 ID: ${player.id || 'Sem ID'} | 📍 POSIÇÃO: [${player.last_pos ? player.last_pos.join(', ') : '0, 2, 0'}]`);
+                }
+            });
         }
+        console.log("=======================================================\n");
+    } catch (e) {
+        console.log("[Painel Erro] Não foi possível renderizar a lista de contas: ", e.message);
     }
-
-    if (!bancoCarregado) {
-        console.log("[Game Rubi] Aviso: Servidor iniciado em modo de segurança, mas a nuvem pode estar fora do ar.");
-    }
-    console.log(`[Game Rubi] Servidor do Reduto RP Online na porta ${PORT}`);
 }
-iniciarServidorComNuvem();
+
+// Aciona o painel assim que o servidor liga para você ver o que já tem lá
+setTimeout(mostrarContasNoRender, 5000);
 
 wss.on('connection', (ws) => {
     ws.on('message', async (message) => {
@@ -43,21 +50,23 @@ wss.on('connection', (ws) => {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
 
-                if (usuariosCadastrados[username]) {
+                const contaExistente = await banco.buscarUsuarioNaNuvem(username);
+                if (contaExistente) {
                     return ws.send(JSON.stringify({ success: false, message: "Usuário já existe!" }));
                 }
 
-                usuariosCadastrados[username] = {
+                const novoPlayer = {
                     username: username,
                     password: password,
-                    id: 1000 + Object.keys(usuariosCadastrados).length,
+                    id: 1000 + Math.floor(Math.random() * 9000),
                     last_pos: [0, 2, 0]
                 };
 
+                await banco.salvarUsuarioNaNuvem(novoPlayer);
                 ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
                 
-                // Salva o backup na nuvem na mesma hora
-                await banco.salvarListaCompleta(usuariosCadastrados);
+                // Atualiza o painel do Render na mesma hora para você ver a conta surgir lá!
+                setTimeout(mostrarContasNoRender, 1500);
                 return;
             }
 
@@ -66,10 +75,9 @@ wss.on('connection', (ws) => {
                 const username = String(dados.username).trim();
                 const password = String(dados.password).trim();
 
-                const conta = usuariosCadastrados[username];
+                const conta = await banco.buscarUsuarioNaNuvem(username);
 
                 if (conta && String(conta.password) === password) {
-                    console.log(`[Reduto RP] ${username} entrou.`);
                     ws.send(JSON.stringify({
                         success: true,
                         player_id: String(conta.id),
@@ -77,7 +85,7 @@ wss.on('connection', (ws) => {
                         message: "Bem-vindo de volta!"
                     }));
                 } else {
-                    ws.send(JSON.stringify({ success: false, message: "Senha incorreta!" }));
+                    ws.send(JSON.stringify({ success: false, message: "Usuário ou Senha incorreta!" }));
                 }
                 return;
             }
@@ -85,16 +93,18 @@ wss.on('connection', (ws) => {
             // --- 3. AÇÃO: SALVAR POSIÇÃO ---
             if (dados.action === "save_position") {
                 const username = String(dados.username).trim();
-                if (usuariosCadastrados[username] && dados.pos) {
-                    usuariosCadastrados[username].last_pos = dados.pos;
-                    
-                    // Sincroniza a posição com a nuvem
-                    await banco.salvarListaCompleta(usuariosCadastrados);
+                
+                if (username && dados.pos) {
+                    const contaAtual = await banco.buscarUsuarioNaNuvem(username);
+                    if (contaAtual) {
+                        contaAtual.last_pos = dados.pos;
+                        await banco.salvarUsuarioNaNuvem(contaAtual);
+                    }
                 }
                 return;
             }
 
-            // --- 4. MULTIPLAYER EM TEMPO REAL ---
+            // --- 4. MULTIPLAYER ---
             wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(message);
@@ -104,3 +114,4 @@ wss.on('connection', (ws) => {
         } catch (erro) {}
     });
 });
+
