@@ -1,25 +1,23 @@
 const { Client } = require('pg');
 
-// Link da NOVA nuvem Supabase configurada exclusivamente para o Reduto RP
 const connectionString = "postgresql://postgres.v8k3m.supabase.co:5432/postgres?user=postgres.v8k3m&password=RedutoRP123456";
 
 const client = new Client({
     connectionString: connectionString,
-    connectionTimeoutMillis: 10000
+    connectionTimeoutMillis: 5000 // Desiste rápido se a nuvem sumir para não travar o jogo
 });
 
-let conectado = false;
+let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem Supabase] Conectando ao banco de dados estável...");
+        console.log("[Nuvem] Tentando estabelecer conexão de fundo com o Supabase...");
         await client.connect();
-        conectado = true;
+        conectadoA_Nuvem = true;
         console.log("=======================================================");
-        console.log("✅ [SUPABASE] CONECTADO TOTALMENTE COM SUCESSO À NUVEM!");
+        console.log("✅ [SUPABASE] CONECTADO E PRONTO PARA BACKUP!");
         console.log("=======================================================");
         
-        // Cria a tabela de jogadores automaticamente se ela não existir
         await client.query(`
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
@@ -29,14 +27,17 @@ async function conectar() {
             );
         `);
     } catch (e) {
-        console.error("❌ [SUPABASE ERRO CRÍTICO] Falha ao conectar na nuvem:", e.message);
+        console.log("=======================================================");
+        console.log("⚠️ [AVISO DA NUVEM] Supabase offline ou demorando. Modo de segurança do Render ATIVADO!");
+        console.log("Reason:", e.message);
+        console.log("=======================================================");
+        conectadoA_Nuvem = false;
     }
 }
 conectar();
 
-// Busca o jogador pelo nome na nova nuvem
 async function buscarUsuarioNaNuvem(nome) {
-    if (!conectado) return null;
+    if (!conectadoA_Nuvem) return null;
     try {
         const res = await client.query('SELECT * FROM players WHERE username = $1', [String(nome).trim().toLowerCase()]);
         if (res.rows.length > 0) {
@@ -45,14 +46,12 @@ async function buscarUsuarioNaNuvem(nome) {
         }
         return null;
     } catch (e) {
-        console.error("[Supabase Erro] Falha ao buscar:", e.message);
         return null;
     }
 }
 
-// Grava ou atualiza o jogador na nuvem (Insere ou Atualiza se já existir)
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    if (!conectado) return false;
+    if (!conectadoA_Nuvem) return false;
     try {
         const nome = String(dadosJogador.username).trim().toLowerCase();
         await client.query(`
@@ -63,14 +62,12 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
         `, [nome, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
         return true;
     } catch (e) {
-        console.error("[Supabase Erro] Falha real ao gravar dados:", e.message);
         return false;
     }
 }
 
-// Puxa a lista completa para o painel do Render ler
 async function obterTodosOsUsuarios() {
-    if (!conectado) return [];
+    if (!conectadoA_Nuvem) return [];
     try {
         const res = await client.query('SELECT * FROM players');
         return res.rows;
@@ -79,4 +76,4 @@ async function obterTodosOsUsuarios() {
     }
 }
 
-module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem, obterTodosOsUsuarios };
+module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem, obterTodosOsUsuarios, isNuvemOnline: () => conectadoA_Nuvem };
