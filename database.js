@@ -1,21 +1,19 @@
 const { Client } = require('pg');
 
-// 🔑 COLOQUE SUA SENHA ABAIXO:
-// Substitua a palavra SUA_SENHA_AQUI pela senha que você criou lá no Supabase.
-// ATENÇÃO: Se sua senha tiver símbolos como @, #, $ mude ela no site do Supabase para usar apenas letras e números!
-const connectionString = "postgresql://postgres.riqsfqhnfmerwvhidalp:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:5432/postgres";
+// 🔑 LINHA DE CONEXÃO EXCLUSIVA DO MATHEUS COM A SENHA INSERIDA
+const connectionString = "postgresql://postgres:Matheushen135@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?options=-c%20project%3Driqsfqhnfmerwvhidalp";
 
 const client = new Client({
     connectionString: connectionString,
     connectionTimeoutMillis: 10000, 
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false } // Permite que o Render passe pela segurança do Supabase
 });
 
 let conectadoA_Nuvem = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Conectando diretamente ao banco Supabase...");
+        console.log("[Nuvem] Conectando diretamente ao banco Supabase do Matheus...");
         await client.connect();
         conectadoA_Nuvem = true;
         
@@ -23,6 +21,7 @@ async function conectar() {
         console.log("✅ [SUPABASE] CONECTADO COM SUCESSO À SUA NUVEM REAL!");
         console.log("=======================================================");
         
+        // Cria a tabela de players na sua conta se ela não existir
         await client.query(`
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
@@ -33,8 +32,8 @@ async function conectar() {
         `);
     } catch (e) {
         console.log("=======================================================");
-        console.log("❌ [ERRO CRÍTICO DE CONEXÃO] A Nuvem recusou o servidor!");
-        console.log("Motivo Real do Erro:", e.message);
+        console.log("❌ [ERRO CRÍTICO] A Nuvem recusou a conexão!");
+        console.log("Motivo:", e.message);
         console.log("=======================================================");
         conectadoA_Nuvem = false;
     }
@@ -42,7 +41,7 @@ async function conectar() {
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
-    if (!conectadoA_Nuvem) return null; // Bloqueia se não tiver nuvem
+    if (!conectadoA_Nuvem) return null;
     try {
         const username = String(nome).trim().toLowerCase();
         const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
@@ -54,7 +53,7 @@ async function buscarUsuarioNaNuvem(nome) {
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
-    if (!conectadoA_Nuvem) return false; // Bloqueia se não tiver nuvem
+    if (!conectadoA_Nuvem) return false;
     try {
         const username = String(dadosJogador.username).trim().toLowerCase();
         await client.query(`
@@ -65,7 +64,7 @@ async function salvarUsuarioNaNuvem(dadosJogador) {
         `, [username, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
         return true;
     } catch (e) {
-        console.log("❌ Erro ao gravar na nuvem:", e.message);
+        console.log("❌ Erro ao gravar dados na nuvem:", e.message);
         return false;
     }
 }
