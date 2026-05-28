@@ -1,7 +1,7 @@
 const { Client } = require('pg');
 
 // Link da nuvem Supabase do Reduto RP
-const connectionString = "postgresql://postgres.v8k3m.supabase.co:5432/postgres?user=postgres.v8k3m&password=RedutoRP123456";
+const connectionString = "https://riqsfqhnfmerwvhidalp.supabase.co";
 
 const client = new Client({
     connectionString: connectionString,
