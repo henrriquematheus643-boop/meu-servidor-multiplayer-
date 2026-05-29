@@ -1,13 +1,13 @@
 const WebSocket = require('ws');
 const database = require('./database.js');
 
-// O Railway configura a porta sozinho automaticamente
-const PORTA = process.env.PORT || 10000;
+// 🛠️ CONFIGURADO TOTALMENTE PARA A PORTA 8080 DO SEU SERVIDOR
+const PORTA = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORTA });
 
 console.log(`🚀 [SERVIDOR WEBSOCKET] Reduto RP online na porta ${PORTA}`);
 
-// Guarda todos os celulares conectados jogando no mapa agora
+// Guarda todos os jogadores ativos no mapa em tempo real
 let clientesAtivos = new Map();
 
 wss.on('connection', (ws) => {
@@ -20,7 +20,7 @@ wss.on('connection', (ws) => {
         try {
             const dados = JSON.parse(mensagem);
             
-            // 📝 1. COMANDO DE REGISTRAR CONTA (TELA INICIAL)
+            // 📝 1. COMANDO DE REGISTRAR CONTA
             if (dados.comando === "registrar") {
                 const usuarioExiste = await database.buscarUsuarioNaNuvem(dados.username);
                 
@@ -32,28 +32,24 @@ wss.on('connection', (ws) => {
                         username: dados.username,
                         password: dados.password,
                         id: Math.floor(Math.random() * 90000) + 10000,
-                        last_pos: [0, 2, 0] // Nasce um pouco acima do chão
+                        last_pos: [0, 2, 0]
                     };
                     await database.salvarUsuarioNaNuvem(novoJogador);
                     
-                    // Envia a resposta de sucesso para a Godot disparar o login automático
                     ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                     console.log(`✅ [BANCO] Nova conta criada para: ${dados.username}`);
                 }
                 return;
             }
 
-            // 🔑 2. COMANDO DE LOGAR CONTA (TELA INICIAL)
+            // 🔑 2. COMANDO DE LOGAR CONTA
             if (dados.comando === "logar") {
                 const resultadoBanco = await database.buscarUsuarioNaNuvem(dados.username);
-                
-                // Converte os dados brutos do PostgreSQL para um objeto limpo
                 const jogador = resultadoBanco ? { ...resultadoBanco } : null;
                 
                 if (jogador && String(jogador.password) === String(dados.password)) {
                     meuIdNoServidor = String(jogador.id);
-                    // Garante que o nome não venha como uma lista/array
-                    meuNomeNoServidor = Array.isArray(jogador.username) ? parseInt(jogador.username[0]) : jogador.username;
+                    meuNomeNoServidor = Array.isArray(jogador.username) ? jogador.username[0] : jogador.username;
                     
                     ws.send(JSON.stringify({ 
                         status: "logado_com_sucesso", 
@@ -61,7 +57,7 @@ wss.on('connection', (ws) => {
                         nome_oficial: meuNomeNoServidor,
                         posicao: jogador.last_pos 
                     }));
-                    console.log(`🔓 [BANCO] Login aprovado via WebSocket: ${dados.username} [ID: ${meuIdNoServidor}]`);
+                    console.log(`🔓 [BANCO] Login aprovado via WebSocket: ${dados.username}`);
                 } else {
                     ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
                     console.log(`❌ [BANCO] Erro de login para: ${dados.username}`);
@@ -69,15 +65,12 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            // 🌐 3. CONEXÃO MULTIPLAYER (ENTRADA DO BONECO NO MAPA 3D)
+            // 🌐 3. CONEXÃO MULTIPLAYER (ENTRADA DO BONECO NO MAPA)
             if (dados.action === "login") {
                 meuIdNoServidor = String(dados.id);
                 meuNomeNoServidor = dados.username;
-                
-                // Salva o WebSocket do jogador na lista de rede ativa
                 clientesAtivos.set(meuIdNoServidor, ws);
                 
-                // Avisa todos os outros jogadores criarem seu boneco na tela deles
                 transmitirParaTodos({
                     action: "login",
                     id: meuIdNoServidor,
@@ -87,7 +80,7 @@ wss.on('connection', (ws) => {
                 return;
             }
 
-            // 📍 4. MOVIMENTO EM TEMPO REAL (POSIÇÃO E ROTAÇÃO)
+            // 📍 4. MOVIMENTO EM TEMPO REAL
             if (dados.action === "posicao") {
                 transmitirParaTodos({
                     action: "posicao",
@@ -106,32 +99,26 @@ wss.on('connection', (ws) => {
                     if (jogador) {
                         jogador.last_pos = dados.posicao;
                         await database.salvarUsuarioNaNuvem(jogador);
-                        console.log(`💾 [BANCO] Posicao de ${nome_alvo} salva permanentemente.`);
+                        console.log(`💾 [BANCO] Posicao de ${nome_alvo} salva no PostgreSQL.`);
                     }
                 }
                 return;
             }
 
         } catch (erro) {
-            // Evita que o servidor caia se receber dados mal formatados
+            // Proteção interna contra dados corrompidos
         }
     });
 
-    // ❌ SE O JOGADOR FECHAR O JOGO OU PERDER A INTERNET
     ws.on('close', () => {
         if (meuIdNoServidor) {
             clientesAtivos.delete(meuIdNoServidor);
-            // Avisa os outros celulares a deletarem o boneco desse jogador da tela
-            transmitirParaTodos({
-                action: "sair",
-                id: meuIdNoServidor
-            });
+            transmitirParaTodos({ action: "sair", id: meuIdNoServidor });
             console.log(`❌ [MULTIPLAYER] Cidadão ID ${meuIdNoServidor} desconectou.`);
         }
     });
 });
 
-// Envia pacotes de dados para todos os conectados ao mesmo tempo
 function transmitirParaTodos(dados) {
     const message = JSON.stringify(dados);
     clientesAtivos.forEach((cliente) => {
@@ -140,3 +127,4 @@ function transmitirParaTodos(dados) {
         }
     });
 }
+
