@@ -1,15 +1,13 @@
 {
   "name": "reduto-rp-server",
   "version": "1.0.0",
-  "description": "Servidor do Reduto RP",
+  "description": "Servidor do Reduto RP no Railway",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "axios": "^1.6.8"
-  },
-  "author": "",
-  "license": "ISC"
+    "pg": "^8.11.5"
+  }
 }
