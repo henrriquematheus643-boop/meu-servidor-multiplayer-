@@ -1,36 +1,37 @@
 const { Pool } = require('pg');
 
-// O Railway preenche a variável DATABASE_URL automaticamente na nuvem
+// O Railway conecta automaticamente usando a variável de ambiente abaixo
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // Permite a conexão segura exigida pelo Railway
+        rejectUnauthorized: false // Obrigatório para a segurança do Railway
     }
 });
 
-// Força a criação da tabela correta se ela não existir no PostgreSQL
+// Cria a tabela correta de forma simples e direta se ela não existir
 const inicializarBanco = async () => {
     const queryTabela = `
         CREATE TABLE IF NOT EXISTS usuarios_galaxy (
             id TEXT PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            last_pos JSONB DEFAULT '[0, 2, 0]'::jsonb
+            last_pos TEXT DEFAULT '[0, 2, 0]'
         );
     `;
     try {
         await pool.query(queryTabela);
-        console.log("💾 [POSTGRESQL] Tabela de cidadãos verificada/criada com sucesso!");
+        console.log("💾 [POSTGRESQL] Tabela 'usuarios_galaxy' pronta para uso!");
     } catch (erro) {
-        console.error("❌ [POSTGRESQL] Erro ao criar tabela no banco:", erro);
+        console.error("❌ [POSTGRESQL] Erro crítico ao criar a tabela:", erro);
     }
 };
 
-// Executa a verificação da tabela assim que o servidor liga
+// Liga a verificação assim que o servidor inicia
 inicializarBanco();
 
-// 🔍 FUNÇÃO 1: Busca o jogador pelo nome (para Login e Registro)
+// 🔍 FUNÇÃO 1: Busca o jogador pelo nome (Para Login e Registro)
 const buscarUsuarioNaNuvem = async (username) => {
+    if (!username) return null;
     try {
         const nomeLimpo = String(username).trim();
         const resultado = await pool.query(
@@ -39,33 +40,44 @@ const buscarUsuarioNaNuvem = async (username) => {
         );
         
         if (resultado.rows.length > 0) {
-            // Retorna o jogador formatado corretamente para o server.js
             const usuario = resultado.rows[0];
+            
+            // Converte o texto da posição de volta para uma lista de números [x, y, z] de forma segura
+            let posicaoArray = [0, 2, 0];
+            try {
+                if (usuario.last_pos) {
+                    posicaoArray = typeof usuario.last_pos === 'string' ? JSON.parse(usuario.last_pos) : usuario.last_pos;
+                }
+            } catch (e) {
+                posicaoArray = [0, 2, 0];
+            }
+
             return {
                 id: String(usuario.id),
                 username: String(usuario.username),
                 password: String(usuario.password),
-                last_pos: Array.isArray(usuario.last_pos) ? usuario.last_pos : JSON.parse(JSON.stringify(usuario.last_pos))
+                last_pos: posicaoArray
             };
         }
         return null;
     } catch (erro) {
-        console.error(`❌ [BANCO] Erro ao buscar usuário (${username}):`, erro);
+        console.error(`❌ [BANCO] Erro ao buscar usuario (${username}):`, erro);
         return null;
     }
 };
 
-// 💾 FUNÇÃO 2: Salva ou Atualiza o jogador (para Registro e Posição)
+// 💾 FUNÇÃO 2: Salva ou Atualiza o jogador (Para Registro e Salvar Posição)
 const salvarUsuarioNaNuvem = async (jogador) => {
+    if (!jogador || !jogador.username) return false;
     try {
         const idLimpo = String(jogador.id).trim();
         const nomeLimpo = String(jogador.username).trim();
         const senhaLimpa = String(jogador.password).trim();
         
-        // Converte a posição [x, y, z] para formato JSON aceito pelo PostgreSQL
-        const posicaoJson = JSON.stringify(jogador.last_pos || [0, 2, 0]);
+        // Salva a lista de coordenadas [x, y, z] como um texto limpo, evitando bugs do tipo JSONB
+        const posicaoTexto = JSON.stringify(jogador.last_pos || [0, 2, 0]);
 
-        // Se o usuário já existir, atualiza a posição dele. Se não existir, insere um novo conta.
+        // Executa o comando UPSERT: Se a conta não existir, ele cria. Se já existir, ele atualiza a última posição!
         const queryUpsert = `
             INSERT INTO usuarios_galaxy (id, username, password, last_pos)
             VALUES ($1, $2, $3, $4)
@@ -73,7 +85,7 @@ const salvarUsuarioNaNuvem = async (jogador) => {
             DO UPDATE SET last_pos = EXCLUDED.last_pos;
         `;
 
-        await pool.query(queryUpsert, [idLimpo, nomeLimpo, senhaLimpa, posicaoJson]);
+        await pool.query(queryUpsert, [idLimpo, nomeLimpo, senhaLimpa, posicaoTexto]);
         return true;
     } catch (erro) {
         console.error(`❌ [BANCO] Erro ao salvar dados de ${jogador.username}:`, erro);
