@@ -1,15 +1,11 @@
 {
-  "name": "galaxy-roleplay-server",
+  "name": "server-rubi",
   "version": "1.0.0",
-  "description": "Servidor multiplayer para o Galaxy RP na Godot 4",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "pg": "^8.11.3",
-    "ws": "^8.15.1"
-  },
-  "author": "Matheus",
-  "license": "ISC"
+    "ws": "^8.16.0"
+  }
 }
