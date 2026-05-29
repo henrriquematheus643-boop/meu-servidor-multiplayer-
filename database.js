@@ -1,99 +1,81 @@
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
-// O Railway conecta automaticamente usando a variável de ambiente abaixo
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false // Obrigatório para a segurança do Railway
-    }
-});
-
-// Cria a tabela correta de forma simples e direta se ela não existir
-const inicializarBanco = async () => {
-    const queryTabela = `
-        CREATE TABLE IF NOT EXISTS usuarios_galaxy (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            last_pos TEXT DEFAULT '[0, 2, 0]'
-        );
-    `;
-    try {
-        await pool.query(queryTabela);
-        console.log("💾 [POSTGRESQL] Tabela 'usuarios_galaxy' pronta para uso!");
-    } catch (erro) {
-        console.error("❌ [POSTGRESQL] Erro crítico ao criar a tabela:", erro);
-    }
+// 🔑 CONFIGURAÇÃO DO SEU CELULAR BANCO DE DADOS:
+// Substitua o IP_DO_SEU_CELULAR pelo IP real do seu Wi-Fi (Ex: 192.168.1.15)
+const dbConfig = {
+    host: 'IP_DO_SEU_CELULAR', 
+    port: 3306,
+    user: 'root',
+    password: '', // Deixamos sem senha para facilitar no Termux
+    database: 'redutorp',
+    connectTimeout: 15000
 };
 
-// Liga a verificação assim que o servidor inicia
-inicializarBanco();
+let pool = null;
+let conectadoAoCelular = false;
 
-// 🔍 FUNÇÃO 1: Busca o jogador pelo nome (Para Login e Registro)
-const buscarUsuarioNaNuvem = async (username) => {
-    if (!username) return null;
+async function conectar() {
     try {
-        const nomeLimpo = String(username).trim();
-        const resultado = await pool.query(
-            "SELECT id, username, password, last_pos FROM usuarios_galaxy WHERE LOWER(username) = LOWER($1);",
-            [nomeLimpo]
-        );
+        console.log("[Celular DB] Tentando conectar ao banco de dados no celular do Matheus...");
+        pool = mysql.createPool(dbConfig);
         
-        if (resultado.rows.length > 0) {
-            const usuario = resultado.rows[0];
-            
-            // Converte o texto da posição de volta para uma lista de números [x, y, z] de forma segura
-            let posicaoArray = [0, 2, 0];
-            try {
-                if (usuario.last_pos) {
-                    posicaoArray = typeof usuario.last_pos === 'string' ? JSON.parse(usuario.last_pos) : usuario.last_pos;
-                }
-            } catch (e) {
-                posicaoArray = [0, 2, 0];
-            }
+        // Testa a conexão
+        const [rows] = await pool.query('SELECT 1');
+        conectadoAoCelular = true;
+        
+        console.log("=======================================================");
+        console.log("✅ [SISTEMA PRIVADO] CONECTADO AO BANCO DO SEU CELULAR!");
+        console.log("=======================================================");
+    } catch (e) {
+        console.log("=======================================================");
+        console.log("❌ [Erro] Não foi possível alcançar o seu celular:", e.message);
+        console.log("DICA: Certifique-se de que o Termux está aberto e o comando mysqld_safe rodando.");
+        console.log("=======================================================");
+        conectadoAoCelular = false;
+    }
+}
+conectar();
 
-            return {
-                id: String(usuario.id),
-                username: String(usuario.username),
-                password: String(usuario.password),
-                last_pos: posicaoArray
-            };
+async function buscarUsuarioNaNuvem(nome) {
+    if (!conectadoAoCelular) return null;
+    try {
+        const username = String(nome).trim().toLowerCase();
+        const [rows] = await pool.query('SELECT * FROM players WHERE username = ?', [username]);
+        if (rows.length > 0) {
+            const p = rows[0];
+            // Converte a posição de texto de volta para array
+            return { username: p.username, password: p.password, id: p.id, last_pos: JSON.parse(p.last_pos || '[]') };
         }
         return null;
-    } catch (erro) {
-        console.error(`❌ [BANCO] Erro ao buscar usuario (${username}):`, erro);
-        return null;
-    }
-};
+    } catch (e) { return null; }
+}
 
-// 💾 FUNÇÃO 2: Salva ou Atualiza o jogador (Para Registro e Salvar Posição)
-const salvarUsuarioNaNuvem = async (jogador) => {
-    if (!jogador || !jogador.username) return false;
+async function salvarUsuarioNaNuvem(dadosJogador) {
+    if (!conectadoAoCelular) return false;
     try {
-        const idLimpo = String(jogador.id).trim();
-        const nomeLimpo = String(jogador.username).trim();
-        const senhaLimpa = String(jogador.password).trim();
+        const username = String(dadosJogador.username).trim().toLowerCase();
+        const posTexto = JSON.stringify(dadosJogador.last_pos || []);
         
-        // Salva a lista de coordenadas [x, y, z] como um texto limpo, evitando bugs do tipo JSONB
-        const posicaoTexto = JSON.stringify(jogador.last_pos || [0, 2, 0]);
-
-        // Executa o comando UPSERT: Se a conta não existir, ele cria. Se já existir, ele atualiza a última posição!
-        const queryUpsert = `
-            INSERT INTO usuarios_galaxy (id, username, password, last_pos)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (username) 
-            DO UPDATE SET last_pos = EXCLUDED.last_pos;
-        `;
-
-        await pool.query(queryUpsert, [idLimpo, nomeLimpo, senhaLimpa, posicaoTexto]);
+        await pool.query(`
+            INSERT INTO players (username, password, id, last_pos) 
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE password = ?, id = ?, last_pos = ?
+        `, [username, dadosJogador.password, dadosJogador.id, posTexto, dadosJogador.password, dadosJogador.id, posTexto]);
         return true;
-    } catch (erro) {
-        console.error(`❌ [BANCO] Erro ao salvar dados de ${jogador.username}:`, erro);
-        return false;
-    }
-};
+    } catch (e) { return false; }
+}
 
-module.exports = {
-    buscarUsuarioNaNuvem,
-    salvarUsuarioNaNuvem
+async function obterTodosOsUsuarios() {
+    if (!conectadoAoCelular) return [];
+    try {
+        const [rows] = await pool.query('SELECT * FROM players');
+        return rows.map(p => ({ username: p.username, password: p.password, id: p.id, last_pos: JSON.parse(p.last_pos || '[]') }));
+    } catch (e) { return []; }
+}
+
+module.exports = { 
+    buscarUsuarioNaNuvem, 
+    salvarUsuarioNaNuvem, 
+    obterTodosOsUsuarios, 
+    isNuvemOnline: () => conectadoAoCelular 
 };
