@@ -1,134 +1,120 @@
 const WebSocket = require('ws');
-const banco = require('./database.js');
+const database = require('./database.js');
 
-const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+// O Railway escolhe a porta automaticamente pelo sistema dele
+const PORTA = process.env.PORT || 10000;
+const wss = new WebSocket.Server({ port: PORTA });
 
-// O CACHE DO RENDER: Aqui ficam as contas salvas direto no servidor do Render!
-let dadosLocaisDoRender = {};
+console.log(`🚀 [SERVIDOR] Reduto RP online na porta ${PORTA}`);
 
-console.log("[Game Rubi] Servidor Reduto RP - Sistema de Memória Local Híbrida Ativado!");
-
-// Função que sincroniza a nuvem para dentro do Render quando o servidor liga
-async function puxarDadosDaNuvemParaORender() {
-    console.log("[Sistema] Sincronizando banco de dados com a memória do Render...");
-    const contasNuvem = await banco.obterTodosOsUsuarios();
-    
-    contasNuvem.forEach(p => {
-        dadosLocaisDoRender[p.username.toLowerCase()] = {
-            username: p.username.toLowerCase(),
-            password: p.password,
-            id: p.id,
-            last_pos: p.last_pos || [0, 2, 0]
-        };
-    });
-    console.log(`[Sistema] Sincronização concluída! ${Object.keys(dadosLocaisDoRender).length} contas carregadas no Render.`);
-    mostrarPainelNoRender();
-}
-
-function mostrarPainelNoRender() {
-    const chaves = Object.keys(dadosLocaisDoRender);
-    console.log("\n=======================================================");
-    console.log(`📊 [MEMÓRIA LIVE DO RENDER] CONTAS ATIVAS NO JOGO (${chaves.length})`);
-    console.log(`🌐 STATUS DA NUVEM BACKUP: ${banco.isNuvemOnline() ? "✅ ONLINE" : "⚠️ OFFLINE (Modo de Emergência Ativo)"}`);
-    console.log("=======================================================");
-    chaves.forEach((key, index) => {
-        const player = dadosLocaisDoRender[key];
-        console.log(`${index + 1}. 👤 ${player.username.toUpperCase()} | 🔑 ${player.password} | 🆔 ID: ${player.id} | 📍 POS: [${player.last_pos.join(', ')}]`);
-    });
-    console.log("=======================================================\n");
-}
-
-// Espera 4 segundos para o banco conectar e puxa os dados
-setTimeout(puxarDadosDaNuvemParaORender, 4000);
+// Guarda todos os jogadores que estão jogando na cidade agora
+let clientesAtivos = new Map();
 
 wss.on('connection', (ws) => {
-    ws.on('message', async (message) => {
+    let meuIdNoServidor = null;
+    console.log("🔌 [CONEXÃO] Um novo celular se conectou ao servidor!");
+
+    ws.on('message', async (mensagem) => {
         try {
-            const dados = JSON.parse(message);
+            const dados = JSON.parse(mensagem);
             
-            // --- 1. REGISTRAR (SALVA NO RENDER PRIMEIRO, DEPOIS EMPURRA PRA NUVEM) ---
-            if (dados.action === "register") {
-                const username = String(dados.username).trim().toLowerCase();
-                const password = String(dados.password).trim();
-
-                if (!username || !password) {
-                    return ws.send(JSON.stringify({ success: false, message: "Campos inválidos!" }));
-                }
-
-                // Checa na memória ultra rápida do Render se já existe
-                if (dadosLocaisDoRender[username]) {
-                    console.log(`[Registro] Negado: ${username} já existe na memória.`);
-                    return ws.send(JSON.stringify({ success: false, message: "Esta conta já existe!" }));
-                }
-
-                // Cria o player direto na memória do Render
-                const novoPlayer = {
-                    username: username,
-                    password: password,
-                    id: 1000 + Math.floor(Math.random() * 9000),
-                    last_pos: [0, 2, 0]
-                };
-
-                dadosLocaisDoRender[username] = novoPlayer;
-                console.log(`\n🚀 [RENDER MEMÓRIA] Conta '${username.toUpperCase()}' criada com sucesso no servidor!`);
+            // 📝 CÓDIGO DE REGISTRAR CONTA
+            if (dados.comando === "registrar") {
+                const usuarioExiste = await database.buscarUsuarioNaNuvem(dados.username);
                 
-                // Envia resposta imediata para o Godot (Sem travar o jogador!)
-                ws.send(JSON.stringify({ success: true, message: "Conta criada!" }));
-                mostrarPainelNoRender();
-
-                // Em segundo plano, tenta mandar para a nuvem se ela estiver viva
-                banco.salvarUsuarioNaNuvem(novoPlayer).then(salvou => {
-                    if (salvou) console.log(`☁️ [Nuvem Backup] Conta de '${username}' espelhada na nuvem.`);
-                });
-                return;
-            }
-
-            // --- 2. LOGIN (CONECTA DIRETO PELA MEMÓRIA DO RENDER - INSTANTÂNEO) ---
-            if (dados.action === "login") {
-                const username = String(dados.username).trim().toLowerCase();
-                const password = String(dados.password).trim();
-
-                const conta = dadosLocaisDoRender[username];
-
-                if (conta && conta.password === password) {
-                    console.log(`✅ [Reduto RP] Login bem-sucedido na memória: ${username}`);
-                    ws.send(JSON.stringify({
-                        success: true,
-                        player_id: String(conta.id),
-                        last_pos: conta.last_pos,
-                        message: "Bem-vindo ao Reduto RP!"
-                    }));
+                if (usuarioExiste) {
+                    ws.send(JSON.stringify({ status: "erro", msg: "Esse nome ja esta em uso na cidade!" }));
+                    console.log(`⚠️ [REGISTRO] Nome recusado (ja existe): ${dados.username}`);
                 } else {
-                    console.log(`❌ [Reduto RP] Falha de login para o usuário: ${username}`);
-                    ws.send(JSON.stringify({ success: false, message: "Usuário ou Senha incorreta!" }));
+                    const novoJogador = {
+                        username: dados.username,
+                        password: dados.password,
+                        id: Math.floor(Math.random() * 90000) + 10000,
+                        last_pos: [0, 2, 0] // Posição padrão de nascimento
+                    };
+                    await database.salvarUsuarioNaNuvem(novoJogador);
+                    ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
+                    console.log(`✅ [NUVEM] Nova conta criada permanentemente para: ${dados.username}`);
                 }
-                return;
             }
 
-            // --- 3. SALVAR POSIÇÃO ---
-            if (dados.action === "save_position") {
-                const username = String(dados.username).trim().toLowerCase();
-                if (username && dados.pos && dadosLocaisDoRender[username]) {
-                    dadosLocaisDoRender[username].last_pos = dados.pos;
-                    
-                    // Salva na nuvem em segundo plano
-                    banco.salvarUsuarioNaNuvem(dadosLocaisDoRender[username]);
+            // 🔑 CÓDIGO DE LOGAR CONTA
+            if (dados.comando === "logar") {
+                const jogador = await database.buscarUsuarioNaNuvem(dados.username);
+                
+                if (jogador && { ...jogador }.password === dados.password) {
+                    ws.send(JSON.stringify({ 
+                        status: "logado_com_sucesso", 
+                        id_oficial: String(jogador.id),
+                        nome_oficial: jogador.username,
+                        posicao: jogador.last_pos 
+                    }));
+                    console.log(`🔓 [LOGIN] Jogador entrou na cidade: ${dados.username} [ID: ${jogador.id}]`);
+                } else {
+                    ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
+                    console.log(`❌ [LOGIN] Tentativa de login errada para: ${dados.username}`);
                 }
-                return;
             }
 
-            // --- 4. MULTIPLAYER EM TEMPO REAL ---
-            wss.clients.forEach((client) => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(message);
+            // 🚗 SINCRO MULTIPLAYER: ENTRADA NA SALA DO MAPA
+            if (dados.action === "login") {
+                meuIdNoServidor = String(dados.id);
+                clientesAtivos.set(meuIdNoServidor, ws);
+                
+                // Avisa todo mundo que você entrou no mapa
+                transmitirParaTodos({
+                    action: "login",
+                    id: meuIdNoServidor,
+                    username: dados.username
+                });
+                console.log(`🌐 [MULTIPLAYER] ${dados.username} entrou no mapa global.`);
+            }
+
+            // 📍 SINCRO MULTIPLAYER: MOVIMENTO EM TEMPO REAL
+            if (dados.action === "posicao") {
+                transmitirParaTodos({
+                    action: "posicao",
+                    id: dados.id,
+                    pos: dados.pos,
+                    rot: dados.rot
+                });
+            }
+
+            // 💾 SALVAR POSIÇÃO ENVIADA PELO BONECO A CADA 5 SEG
+            if (dados.comando === "salvar_posicao") {
+                if (dados.username) {
+                    const jogador = await database.buscarUsuarioNaNuvem(dados.username);
+                    if (jogador) {
+                        jogador.last_pos = dados.posicao;
+                        await database.salvarUsuarioNaNuvem(jogador);
+                    }
                 }
+            }
+
+        } catch (erro) {
+            // Ignora dados corrompidos ou erros de leitura de pacotes rápidos
+        }
+    });
+
+    ws.on('close', () => {
+        if (meuIdNoServidor) {
+            clientesAtivos.delete(meuIdNoServidor);
+            // Avisa os outros celulares para sumirem com o boneco desse player do mapa
+            transmitirParaTodos({
+                action: "sair",
+                id: meuIdNoServidor
             });
-
-        } catch (erro) {}
+            console.log(`❌ [CONEXÃO] Cidadão ID ${meuIdNoServidor} saiu do jogo.`);
+        }
     });
 });
 
-process.on('uncaughtException', (err) => {
-    console.log('[Segurança] Erro interceptado:', err.message);
-});
+// Envia os dados para todos os celulares conectados ao mesmo tempo
+function transmitirParaTodos(dados) {
+    const mensagem = JSON.stringify(dados);
+    clientesAtivos.forEach((cliente) => {
+        if (cliente.readyState === WebSocket.OPEN) {
+            cliente.send(mensagem);
+        }
+    });
+}
