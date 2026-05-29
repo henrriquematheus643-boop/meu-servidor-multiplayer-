@@ -5,23 +5,23 @@ const database = require('./database.js');
 const PORTA = process.env.PORT || 10000;
 const wss = new WebSocket.Server({ port: PORTA });
 
-console.log(`🚀 [SERVIDOR] Reduto RP online na porta ${PORTA}`);
+console.log(`🚀 [SERVIDOR WEBSOCKET] Reduto RP online na porta ${PORTA}`);
 
-// Guarda todos os celulares que estão conectados jogando no mapa agora
+// Guarda todos os celulares conectados jogando no mapa agora
 let clientesAtivos = new Map();
 
 wss.on('connection', (ws) => {
     let meuIdNoServidor = null;
     let meuNomeNoServidor = null;
     
-    console.log("🔌 [CONEXÃO] Um jogador acabou de conectar ao servidor!");
+    console.log("🔌 [CONEXÃO] Um jogador se conectou via WebSocket!");
 
     ws.on('message', async (mensagem) => {
         try {
             const dados = JSON.parse(mensagem);
             
-            // 📝 1. SE RECEBER COMANDO DE REGISTRAR CONTA (TELA INICIAL)
-            if (dados.comando === "registrar" || dados.action === "registrar" || dados.action === "register") {
+            // 📝 1. COMANDO DE REGISTRAR CONTA
+            if (dados.comando === "registrar") {
                 const usuarioExiste = await database.buscarUsuarioNaNuvem(dados.username);
                 
                 if (usuarioExiste) {
@@ -32,23 +32,23 @@ wss.on('connection', (ws) => {
                         username: dados.username,
                         password: dados.password,
                         id: Math.floor(Math.random() * 90000) + 10000,
-                        last_pos: [0, 2, 0] // Nasce um pouco acima do chão para não cair do mapa
+                        last_pos: [0, 2, 0]
                     };
                     await database.salvarUsuarioNaNuvem(novoJogador);
+                    // Responde com sucesso para a Godot fazer o login automático
                     ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                     console.log(`✅ [BANCO] Nova conta criada para: ${dados.username}`);
                 }
-                return; // Para o código por aqui para não misturar com o multiplayer
             }
 
-            // 🔑 2. SE RECEBER COMANDO DE LOGAR CONTA (TELA INICIAL)
+            // 🔑 2. COMANDO DE LOGAR CONTA
             if (dados.comando === "logar") {
-                const jogador = await database.buscarUsuarioNaNuvem(dados.username);
+                const resultadoBanco = await database.buscarUsuarioNaNuvem(dados.username);
+                const jogador = resultadoBanco ? { ...resultadoBanco } : null;
                 
-                if (jogador && jogador.password === dados.password) {
-                    // Guarda temporariamente os dados para quando ele carregar o mapa
+                if (jogador && String(jogador.password) === String(dados.password)) {
                     meuIdNoServidor = String(jogador.id);
-                    meuNomeNoServidor = jogador.username;
+                    meuNomeNoServidor = Array.isArray(jogador.username) ? jogador.username[0] : jogador.username;
                     
                     ws.send(JSON.stringify({ 
                         status: "logado_com_sucesso", 
@@ -56,33 +56,28 @@ wss.on('connection', (ws) => {
                         nome_oficial: meuNomeNoServidor,
                         posicao: jogador.last_pos 
                     }));
-                    console.log(`🔓 [BANCO] Conta validada! Logando: ${dados.username} [ID: ${jogador.id}]`);
+                    console.log(`🔓 [BANCO] Login aprovado via WebSocket: ${dados.username}`);
                 } else {
                     ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
                     console.log(`❌ [BANCO] Erro de login para: ${dados.username}`);
                 }
-                return;
             }
 
-            // 🌐 3. CONEXÃO MULTIPLAYER (ENTRADA DO BONECO NO MAPA.TSCN)
+            // 🌐 3. CONEXÃO MULTIPLAYER (ENTRADA DO BONECO NO MAPA)
             if (dados.action === "login") {
                 meuIdNoServidor = String(dados.id);
                 meuNomeNoServidor = dados.username;
-                
-                // Salva o celular do jogador na lista de rede ativa
                 clientesAtivos.set(meuIdNoServidor, ws);
                 
-                // Avisa todos os outros jogadores que você entrou no mapa para criarem seu boneco
                 transmitirParaTodos({
                     action: "login",
                     id: meuIdNoServidor,
                     username: meuNomeNoServidor
                 });
                 console.log(`🎮 [MULTIPLAYER] ${meuNomeNoServidor} entrou no mundo 3D.`);
-                return;
             }
 
-            // 📍 4. MOVIMENTO EM TEMPO REAL (CARROS, POSIÇÃO E ROTAÇÃO)
+            // 📍 4. MOVIMENTO EM TEMPO REAL
             if (dados.action === "posicao") {
                 transmitirParaTodos({
                     action: "posicao",
@@ -90,10 +85,9 @@ wss.on('connection', (ws) => {
                     pos: dados.pos,
                     rot: dados.rot
                 });
-                return;
             }
 
-            // 💾 5. SALVAR POSIÇÃO AUTOMÁTICA (DO SCRIPT DO PLAYER)
+            // 💾 5. SALVAR POSIÇÃO AUTOMÁTICA
             if (dados.comando === "salvar_posicao") {
                 var nome_alvo = dados.username || meuNomeNoServidor;
                 if (nome_alvo) {
@@ -101,37 +95,29 @@ wss.on('connection', (ws) => {
                     if (jogador) {
                         jogador.last_pos = dados.posicao;
                         await database.salvarUsuarioNaNuvem(jogador);
-                        console.log(`💾 [BANCO] Posicao de ${nome_alvo} salva permanentemente.`);
                     }
                 }
-                return;
             }
 
         } catch (erro) {
-            // Protege o servidor para não cair se receber algum dado incompleto
+            // Proteção contra dados inválidos
         }
     });
 
-    // ❌ QUANDO O JOGADOR FECHA O JOGO OU CAI A INTERNET
     ws.on('close', () => {
         if (meuIdNoServidor) {
             clientesAtivos.delete(meuIdNoServidor);
-            // Manda todos os outros celulares apagarem o boneco desse jogador da tela
-            transmitirParaTodos({
-                action: "sair",
-                id: meuIdNoServidor
-            });
-            console.log(`❌ [MULTIPLAYER] Cidadão ID ${meuIdNoServidor} saiu da cidade.`);
+            transmitirParaTodos({ action: "sair", id: meuIdNoServidor });
+            console.log(`❌ [MULTIPLAYER] Cidadão ID ${meuIdNoServidor} saiu.`);
         }
     });
 });
 
-// Função que espalha a mensagem para todos os jogadores ao mesmo tempo
 function transmitirParaTodos(dados) {
-    const mensagem = JSON.stringify(dados);
+    const message = JSON.stringify(dados);
     clientesAtivos.forEach((cliente) => {
         if (cliente.readyState === WebSocket.OPEN) {
-            cliente.send(mensagem);
+            cliente.send(message);
         }
     });
 }
