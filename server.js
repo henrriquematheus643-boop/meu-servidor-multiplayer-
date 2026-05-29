@@ -1,62 +1,80 @@
 const WebSocket = require('ws');
+const mongoose = require('mongoose');
 
-// O Railway define a porta automaticamente através da variável de ambiente PORT.
-// Se não encontrar, ele usa a porta 8080 localmente para você testar.
+// 🌐 CONFIGURAÇÃO DO PORTAL DA NUVEM
 const PORT = process.env.PORT || 8080;
 
-// Inicializa o servidor WebSocket
+// 🔑 LINK DO BANCO DE DADOS: O Railway vai puxar isso de forma segura das variáveis de ambiente!
+// Se não tiver na nuvem, ele tenta conectar em um banco local para testes.
+const MONGO_URI = process.env.MONGO_URL || "SUA_URL_DO_MONGODB_AQUI";
+
+// --- 💾 CONEXÃO COM O BANCO DE DADOS (MONGODB) ---
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("💾 [Banco de Dados] Conectado com sucesso na nuvem do MongoDB Atlas!"))
+  .catch((erro) => console.error("❌ [Banco de Dados] Erro ao conectar no MongoDB:", erro));
+
+// Criando a estrutura (Schema) de como a conta do player vai ser salva no banco
+const PlayerSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    id_oficial: { type: String, required: true },
+    posicao: { type: [Number], default: [0, 0, 0] } // [X, Y, Z]
+});
+
+const Player = mongoose.model('Player', PlayerSchema);
+
+// --- 🚀 INICIALIZAÇÃO DO SERVIDOR WEBSOCKET ---
 const server = new WebSocket.Server({ port: PORT });
-
-// Banco de dados temporário na memória para guardar as contas dos jogadores
-// Nota: Em produção, o ideal é conectar com um banco como MongoDB ou PostgreSQL,
-// mas esse aqui funciona direto na nuvem para o Game Rubi rodar liso de primeira!
-const usuariosCadastrados = {}; 
-
-console.log(`🚀 [Game Rubi] Servidor iniciado e rodando na porta ${PORT}`);
+console.log(`🚀 [Game Rubi] Servidor WebSocket rodando na porta ${PORT}`);
 
 server.on('connection', (socket) => {
-    console.log('🔌 [Conexão] Um novo jogador (Godot) acabou de se conectar!');
+    console.log('🔌 [Conexão] Um novo jogador da Godot se conectou!');
 
-    socket.on('message', (data) => {
+    socket.on('message', async (data) => {
         try {
-            // Transforma a mensagem de texto que veio da Godot em um objeto JavaScript
             const mensagem = JSON.parse(data);
             console.log('📥 [Comando Recebido]:', mensagem);
 
             const { comando, username, password, posicao } = mensagem;
 
-            // 📝 LÓGICA DE REGISTRO / CADASTRO
+            // 📝 REGISTRO SALVANDO DIRETO NO BANCO DE DADOS
             if (comando === 'registrar') {
                 if (!username || !password) {
                     socket.send(JSON.stringify({ status: 'erro', msg: 'Usuário ou senha inválidos!' }));
                     return;
                 }
 
-                if (usuariosCadastrados[username]) {
+                // Procura no banco se já existe alguém com esse nome
+                const usuarioExiste = await Player.findOne({ username: username });
+
+                if (usuarioExiste) {
                     socket.send(JSON.stringify({ status: 'erro', msg: 'Essa conta já existe, zagueirão!' }));
                 } else {
-                    // Cria o jogador com ID único e posição inicial zerada no mapa 3D
-                    usuariosCadastrados[username] = {
+                    // Cria o novo jogador para salvar permanentemente no banco de dados do site
+                    const novoPlayer = new Player({
                         id_oficial: '_' + Math.random().toString(36).substr(2, 9),
-                        nome_oficial: username,
+                        username: username,
                         password: password,
-                        posicao: [0, 0, 0] // Spawn inicial [X, Y, Z]
-                    };
-                    console.log(`✅ [Cadastro] Conta criada para: ${username}`);
+                        posicao: [0, 0, 0]
+                    });
+
+                    await novoPlayer.save(); // Salva no site do banco de dados
+                    console.log(`✅ [Banco de Dados] Nova conta gravada permanentemente: ${username}`);
                     socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
                 }
             }
 
-            // 🔑 LÓGICA DE LOGIN
+            // 🔑 LOGIN BUSCANDO DIRETO NO BANCO DE DADOS
             else if (comando === 'logar') {
-                const conta = usuariosCadastrados[username];
+                // Busca o player no banco do site
+                const conta = await Player.findOne({ username: username });
 
                 if (conta && conta.password === password) {
-                    console.log(`🔓 [Login] Acesso liberado para: ${username}`);
+                    console.log(`🔓 [Login] Acesso liberado via Banco: ${username}`);
                     socket.send(JSON.stringify({
                         status: 'logado_com_sucesso',
                         id_oficial: conta.id_oficial,
-                        nome_oficial: conta.nome_oficial,
+                        nome_oficial: conta.username,
                         posicao: conta.posicao
                     }));
                 } else {
@@ -64,20 +82,19 @@ server.on('connection', (socket) => {
                 }
             }
 
-            // 📍 LÓGICA DE SALVAR POSIÇÃO MULTIPLAYER
+            // 📍 SALVAR POSIÇÃO ATUALIZANDO O BANCO DE DADOS
             else if (comando === 'salvar_posicao') {
-                if (usuariosCadastrados[username]) {
-                    usuariosCadastrados[username].posicao = posicao;
-                    console.log(`📍 [Posição] ${username} salvo em: [${posicao}]`);
-                }
+                // Atualiza as coordenadas [X, Y, Z] do player no banco de dados
+                await Player.updateOne({ username: username }, { $set: { posicao: posicao } });
+                console.log(`📍 [Banco de Dados] Posição de ${username} atualizada para: [${posicao}]`);
             }
 
         } catch (erro) {
-            console.error('❌ [Erro] Falha ao processar dados enviados pela Godot:', erro);
+            console.error('❌ [Erro] Falha ao processar comandos:', erro);
         }
     });
 
     socket.on('close', () => {
-        console.log('❌ [Conexão] Um jogador desconectou do servidor.');
+        console.log('❌ [Conexão] Um jogador desconectou.');
     });
 });
