@@ -1,67 +1,64 @@
-const axios = require('axios');
+const { Client } = require('pg');
 
-// 🌐 NUVEM AUTOMÁTICA LIVRE (Sem Usuário, Sem Senha, Sem Portas e Sem Firewall)
-const ENDERECO_NUVEM = "https://api.restful-api.dev/objects/ff808181932c020501932d56a73c0116";
+// O Railway preenche a linha abaixo sozinho com o link do banco dele!
+const URL_DO_BANCO = process.env.DATABASE_URL;
 
-let bancoLocalMemoria = {};
-let nuvemPronta = false;
+const client = new Client({
+    connectionString: URL_DO_BANCO
+});
+
+let conectado = false;
 
 async function conectar() {
     try {
-        console.log("[Nuvem] Acessando canal de dados automático...");
-        const resposta = await axios.get(ENDERECO_NUVEM);
+        await client.connect();
+        conectado = true;
+        console.log("=======================================================");
+        console.log("✅ [RAILWAY] BANCO DE DADOS CONECTADO AUTOMATICAMENTE!");
+        console.log("=======================================================");
         
-        if (resposta.data && resposta.data.data && resposta.data.data.players) {
-            bancoLocalMemoria = resposta.data.data.players;
-        }
-        nuvemPronta = true;
-        console.log("=======================================================");
-        console.log("✅ [SISTEMA] NUVEM CONECTADA AUTOMATICAMENTE! SEM ERROS!");
-        console.log("=======================================================");
+        // Cria a tabela que vai guardar as contas e posições para sempre
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS players (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                id INT,
+                last_pos REAL[]
+            );
+        `);
     } catch (e) {
-        // Se a rota estiver iniciando agora, mantém ativo e cria a estrutura
-        bancoLocalMemoria = {};
-        nuvemPronta = true;
-        console.log("=======================================================");
-        console.log("✅ [SISTEMA] CANAL DE DADOS GERADO E ATIVADO COM SUCESSO!");
-        console.log("=======================================================");
+        console.log("❌ [Erro Banco Railway]:", e.message);
     }
 }
 conectar();
 
 async function buscarUsuarioNaNuvem(nome) {
+    if (!conectado) return null;
     const username = String(nome).trim().toLowerCase();
-    return bancoLocalMemoria[username] || null;
+    try {
+        const res = await client.query('SELECT * FROM players WHERE username = $1', [username]);
+        if (res.rows.length > 0) return res.rows[0];
+        return null;
+    } catch (e) {
+        return null;
+    }
 }
 
 async function salvarUsuarioNaNuvem(dadosJogador) {
+    if (!conectado) return false;
     const username = String(dadosJogador.username).trim().toLowerCase();
-    bancoLocalMemoria[username] = dadosJogador;
-
-    if (nuvemPronta) {
-        try {
-            // Envia os dados direto para o storage web livre
-            await axios.put(ENDERECO_NUVEM, {
-                name: "RedutoRP_Cloud_Data",
-                data: { players: bancoLocalMemoria }
-            });
-            console.log(`☁️ [Nuvem] Dados sincronizados para: ${username}`);
-            return true;
-        } catch (e) {
-            console.log(`⚠️ [Aviso] Salvando temporariamente em cache local: ${e.message}`);
-            return true;
-        }
+    try {
+        await client.query(`
+            INSERT INTO players (username, password, id, last_pos) 
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (username) 
+            DO UPDATE SET password = $2, id = $3, last_pos = $4;
+        `, [username, dadosJogador.password, dadosJogador.id, dadosJogador.last_pos]);
+        console.log(`💾 [Banco] Dados de ${username} salvos com sucesso!`);
+        return true;
+    } catch (e) {
+        return false;
     }
-    return true;
 }
 
-async function obterTodosOsUsuarios() {
-    return Object.values(bancoLocalMemoria);
-}
-
-module.exports = { 
-    buscarUsuarioNaNuvem, 
-    salvarUsuarioNaNuvem, 
-    obterTodosOsUsuarios, 
-    isNuvemOnline: () => nuvemPronta 
-};
+module.exports = { buscarUsuarioNaNuvem, salvarUsuarioNaNuvem };
