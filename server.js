@@ -1,23 +1,22 @@
 const WebSocket = require('ws');
-const database = require('./database');
+const database = require('./database'); // Conexão com o seu banco Supabase/PostgreSQL
 
 const PORT = process.env.PORT || 8080;
 
-// 🧠 A MEMÓRIA DO RENDER (Cofre veloz de contas)
+// 🧠 Banco de dados temporário na memória do Render para carregar rápido
 const bancoLocalRender = new Map();
 
-// 🌐 LISTA DE JOGADORES ONLINE AGORA (Para o sistema multiplayer se multiplicar)
-const clientesConectados = new Map();
+// 🌐 Lista de sockets dos jogadores que estão ONLINE jogando agora
+const playersOnline = new Map();
 
 async function iniciarServidor() {
     try {
         console.log("🔄 [Render] Inicializando o Servidor Principal...");
         
-        // Carrega o backup do Supabase para a memória veloz do Render
+        // Sincroniza o banco de dados
         try {
             await database.conectarBanco();
-            console.log("📥 [Backup] Carregando contas antigas do Supabase para a memória do Render...");
-            
+            console.log("📥 [Backup] Carregando contas para a memória veloz...");
             const comandoSQL = 'SELECT username, password, id_oficial, pos_x, pos_y, pos_z FROM jogadores';
             if (database.db && typeof database.db.query === 'function') {
                 const resultado = await database.db.query(comandoSQL);
@@ -31,70 +30,46 @@ async function iniciarServidor() {
                         pos_z: conta.pos_z || 0.0
                     });
                 });
-                console.log(`📊 [Backup] ${bancoLocalRender.size} contas carregadas na memória!`);
             }
-        } catch (erroBanco) {
-            console.log("⚠️ [Aviso] Sem backup do Supabase. Usando armazenamento limpo do Render.");
+        } catch (e) {
+            console.log("⚠️ [Aviso] Rodando sem banco externo. Usando memória local.");
         }
         
         const server = new WebSocket.Server({ port: PORT });
-        console.log(`🚀 [Reduto RP] Servidor Online com Multiplayer ativo na porta ${PORT}`);
+        console.log(`🚀 [Reduto RP] Servidor rodando com Multiplayer na porta ${PORT}`);
 
         server.on('connection', (socket) => {
-            // Guarda o nome do usuário assim que ele logar para sabermos quem desconectou depois
-            let usuarioDesteSocket = null;
+            let meuUsuario = null;
 
             socket.on('message', async (data) => {
                 try {
-                    const textoLimpado = data.toString('utf8');
-                    const msg = JSON.parse(textoLimpado);
+                    const msg = JSON.parse(data.toString('utf8'));
                     const { comando, username, password, posicao } = msg;
 
-                    // 📝 SISTEMA DE REGISTRO
+                    // 📝 REGISTRO DE CONTA
                     if (comando === 'registrar') {
-                        if (!username || !password) {
-                            socket.send(JSON.stringify({ status: 'erro', msg: 'Campos em branco!' }));
-                            return;
-                        }
                         if (bancoLocalRender.has(username)) {
-                            socket.send(JSON.stringify({ status: 'erro', msg: 'Esta conta ja existe no Reduto!' }));
+                            socket.send(JSON.stringify({ status: 'erro', msg: 'Esta conta ja existe!' }));
                             return;
                         }
-
-                        const novoIdOficial = 'ID_' + Math.floor(1000 + Math.random() * 9000);
-                        const novosDadosJogador = {
-                            username: username,
-                            password: password,
-                            id_oficial: novoIdOficial,
-                            pos_x: 0.0,
-                            pos_y: 0.0,
-                            pos_z: 0.0
-                        };
+                        const novoId = 'ID_' + Math.floor(1000 + Math.random() * 9000);
+                        const novosDados = { username, password, id_oficial: novoId, pos_x: 0.0, pos_y: 0.0, pos_z: 0.0 };
                         
-                        bancoLocalRender.set(username, novosDadosJogador);
+                        bancoLocalRender.set(username, novosDados);
                         socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
-
-                        database.registrarJogador(username, password).catch(err => {});
+                        database.registrarJogador(username, password).catch(() => {});
                     }
 
-                    // 🔑 SISTEMA DE LOGIN (CONECTA O PLAYER NA REDE MULTIPLAYER)
+                    // 🔑 LOGIN (ENTRADA NO MULTIPLAYER)
                     else if (comando === 'logar') {
-                        if (!username || !password) {
-                            socket.send(JSON.stringify({ status: 'erro', msg: 'Preencha os campos!' }));
-                            return;
-                        }
-
                         const conta = bancoLocalRender.get(username);
-
                         if (conta && conta.password === password) {
-                            usuarioDesteSocket = username;
+                            meuUsuario = username;
                             
-                            // 🔥 ENTRADA MULTIPLAYER: Salva o socket do jogador na lista de ativos
-                            clientesConectados.set(username, socket);
+                            // 🔥 Salva o jogador na lista de ativos do multiplayer
+                            playersOnline.set(username, socket);
                             
-                            console.log(`🔓 [Acesso-Multiplayer] ${username} entrou na rede.`);
-                            
-                            // Envia os dados de sucesso para quem acabou de logar
+                            // Responde para o próprio jogador que ele entrou
                             socket.send(JSON.stringify({
                                 status: 'logado_com_sucesso',
                                 id_oficial: conta.id_oficial,
@@ -102,75 +77,73 @@ async function iniciarServidor() {
                                 posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
                             }));
 
-                            // 🔥 MULTIPLICAÇÃO: Avisa a TODOS os outros jogadores que esse cara nasceu
-                            transmitirParaTodos(username, {
+                            // 📡 MULTIPLAYER: Avisa TODOS os outros que você nasceu no mapa
+                            transmitirParaOutros(username, {
                                 status: 'player_nasceu',
                                 id_oficial: conta.id_oficial,
                                 nome_oficial: conta.username,
                                 posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
                             });
                         } else {
-                            socket.send(JSON.stringify({ status: 'erro', msg: 'Usuario ou senha incorretos!' }));
+                            socket.send(JSON.stringify({ status: 'erro', msg: 'Dados incorretos!' }));
                         }
                     }
 
-                    // 📍 SISTEMA MULTIPLAYER DE MOVIMENTAÇÃO (ATUALIZAÇÃO EM TEMPO REAL)
+                    // 🏃‍♂️ ATUALIZAÇÃO DE POSIÇÃO EM TEMPO REAL (MULTIPLAYER)
                     else if (comando === 'salvar_posicao') {
                         if (username && posicao && posicao.length === 3) {
                             const conta = bancoLocalRender.get(username);
                             if (conta) {
-                                // 1. Atualiza na memória interna do Render
                                 conta.pos_x = posicao[0];
                                 conta.pos_y = posicao[1];
                                 conta.pos_z = posicao[2];
 
-                                // 2. 🔥 MULTIPLICAÇÃO: Envia a nova posição dele para os outros players verem ele andando!
-                                transmitirParaTodos(username, {
+                                // 📡 MULTIPLAYER: Repassa a sua nova posição para os outros verem você andando
+                                transmitirParaOutros(username, {
                                     status: 'player_moveu',
                                     nome_oficial: username,
                                     id_oficial: conta.id_oficial,
                                     posicao: posicao
                                 });
 
-                                // 3. Envia a cópia de backup em silêncio para o Supabase
-                                database.salvarPosicaoJogador(username, posicao).catch(err => {});
+                                // Salva no banco em segundo plano
+                                database.salvarPosicaoJogador(username, posicao).catch(() => {});
                             }
                         }
                     }
 
-                } catch (e) {
-                    // Proteção contra dados corrompidos
-                }
+                } catch (err) {}
             });
 
-            // ❌ QUANDO O JUGADOR FECHA O JOGO: Remove ele e avisa os outros sumirem com o boneco
+            // ❌ SE DESCONECTAR OU FECHAR O APLICATIVO
             socket.on('close', () => {
-                if (usuarioDesteSocket) {
-                    console.log(`❌ [Multiplayer] ${usuarioDesteSocket} saiu do jogo.`);
-                    clientesConectados.delete(usuarioDesteSocket);
+                if (meuUsuario) {
+                    console.log(`❌ [Multiplayer] ${meuUsuario} saiu.`);
+                    playersOnline.delete(meuUsuario);
                     
-                    // Avisa a todos para apagarem a cópia duplicada desse boneco no mapa
-                    transmitirParaTodos(usuarioDesteSocket, {
+                    // 📡 MULTIPLAYER: Avisa todo mundo para remover o seu boneco da tela deles
+                    transmitirParaOutros(meuUsuario, {
                         status: 'player_saiu',
-                        nome_oficial: usuarioDesteSocket
+                        nome_oficial: meuUsuario
                     });
                 }
             });
         });
 
     } catch (err) {
-        console.error("❌ Erro fatal no servidor principal:", err.message);
+        console.error("❌ Erro fatal:", err.message);
     }
 }
 
-// 📡 Função auxiliar para enviar dados para todo mundo, menos para o próprio dono dos dados
-function transmitirParaTodos(remetente, dados) {
-    const pacoteTexto = JSON.stringify(dados);
-    clientesConectados.forEach((socketCliente, nomeCliente) => {
+// 📡 Função mestre do multiplayer: envia os dados para todo mundo, menos para o dono deles
+function transmitirParaOutros(remetente, dados) {
+    const stringDados = JSON.stringify(dados);
+    playersOnline.forEach((socketCliente, nomeCliente) => {
         if (nomeCliente !== remetente && socketCliente.readyState === WebSocket.OPEN) {
-            socketCliente.send(pacoteTexto);
+            socketCliente.send(stringDados);
         }
     });
 }
 
 iniciarServidor();
+
