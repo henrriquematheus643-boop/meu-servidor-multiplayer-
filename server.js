@@ -1,52 +1,47 @@
 const WebSocket = require('ws');
 const wss = new WebSocket.Server({ port: process.env.PORT || 8080 });
 
-console.log("🚀 Servidor Node.js rodando na porta 8080...");
+// Simulação de Banco de Dados (Substitua pela conexão real com o seu DB, ex: Mongoose ou pg)
+let bancoDeDadosUsuarios = {}; 
 
 wss.on('connection', (ws) => {
-    console.log("👤 Novo cliente conectado!");
+    console.log("Novo jogador conectado ao Railway.");
 
-    ws.on('message', (message) => {
-        try {
-            const data = JSON.parse(message);
-            console.log("📥 Comando recebido do cliente:", data.comando);
+    ws.on('message', (data) => {
+        const mensagem = JSON.parse(data);
+        
+        switch (mensagem.comando) {
+            case 'registrar':
+                if (!bancoDeDadosUsuarios[mensagem.username]) {
+                    bancoDeDadosUsuarios[mensagem.username] = { 
+                        password: mensagem.password, 
+                        posicao: [0, 1, 0] 
+                    };
+                    ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
+                } else {
+                    ws.send(JSON.stringify({ status: "erro", msg: "Usuário já existe!" }));
+                }
+                break;
 
-            switch (data.comando) {
-                case 'log':
-                    // CONFIRMAÇÃO DO APERTO DE MÃO
-                    console.log("✅ [CONFIRMAÇÃO]: " + data.mensagem);
-                    ws.send(JSON.stringify({ status: "log_recebido", info: "Conexão confirmada" }));
-                    break;
-
-                case 'logar':
-                    // Lógica de Login
-                    console.log("🔑 Tentativa de login para: " + data.username);
+            case 'logar':
+                const user = bancoDeDadosUsuarios[mensagem.username];
+                if (user && user.password === mensagem.password) {
                     ws.send(JSON.stringify({ 
                         status: "logado_com_sucesso", 
-                        nome_oficial: data.username 
+                        nome_oficial: mensagem.username,
+                        posicao: user.posicao 
                     }));
-                    break;
+                } else {
+                    ws.send(JSON.stringify({ status: "erro", msg: "Login ou senha incorretos!" }));
+                }
+                break;
 
-                case 'salvar_posicao':
-                    // Reenvia para os outros clientes (sistema de broadcast)
-                    broadcast({
-                        status: "player_moveu",
-                        nome_oficial: data.username,
-                        posicao: data.posicao
-                    }, ws);
-                    break;
-            }
-        } catch (e) {
-            console.error("❌ Erro ao processar mensagem:", e);
+            case 'salvar_posicao':
+                if (bancoDeDadosUsuarios[mensagem.username]) {
+                    bancoDeDadosUsuarios[mensagem.username].posicao = mensagem.posicao;
+                    console.log(`Posição salva para ${mensagem.username}: ${mensagem.posicao}`);
+                }
+                break;
         }
     });
 });
-
-// Função para enviar para todos, menos para quem enviou
-function broadcast(data, senderWs) {
-    wss.clients.forEach((client) => {
-        if (client !== senderWs && client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(data));
-        }
-    });
-}
