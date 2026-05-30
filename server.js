@@ -146,4 +146,3 @@ function transmitirParaOutros(remetente, dados) {
 }
 
 iniciarServidor();
-
