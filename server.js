@@ -1,69 +1,99 @@
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws'); // Ou socket.io, dependendo do seu sistema
-const fs = require('fs').promises; // Usando promises para NÃO travar o servidor
+const WebSocket = require('ws');
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const PORT = process.env.PORT || 8080;
+const server = new WebSocket.Server({ port: PORT });
 
-const PORT = 3000;
-let mapaDados = null;
+// Armazena as informações dos jogadores que estão online no mapa
+// Estrutura: "nome_do_jogador" => { socket, posicao: [x, y, z] }
+const jogadoresOnline = new Map();
 
-// 1. CARREGAMENTO DO MAPA ULTRA-LEVE (ASSÍNCRONO)
-// Isso impede que o Node.js trave o loop de eventos e fique "Offline"
-async function carregarMapaSeguro() {
-    try {
-        console.log("[SERVER] Carregando dados da cidade de forma otimizada...");
-        // Substitua pelo caminho real do seu arquivo de dados da cidade (JSON ou TSCN)
-        const data = await fs.readFile('./mapa_cidade.json', 'utf8'); 
-        mapaDados = JSON.parse(data);
-        console.log("[SERVER] Cidade carregada com sucesso! Pronto para o Multiplayer.");
-    } catch (err) {
-        console.error("[ERRO] Não foi possível carregar o mapa, mas o servidor continuará ONLINE:", err.message);
-        // Mantém uma array vazia para o servidor não crashar se o mapa sumir
-        mapaDados = []; 
-    }
-}
+console.log(`🚀 [Servidor Reduto RP] Iniciado com sucesso na porta ${PORT}`);
 
-// 2. GERENCIADOR DO MULTIPLAYER (LÓGICA DE REDE)
-wss.on('connection', (ws) => {
-    console.log("[MULTIPLAYER] Novo jogador conectado!");
+server.on('connection', (socket) => {
+    let meuUsuario = null;
+    console.log("🔄 [Conexão] Um novo dispositivo se conectou ao WebSocket.");
 
-    // Envia o status online e os dados do mapa imediatamente para o Player
-    ws.send(JSON.stringify({
-        type: "STATUS",
-        online: true,
-        mensagem: "Conectado ao Multiplayer Manager"
-    }));
-
-    // Se o player pedir o mapa, envia sem travar os outros jogadores
-    ws.on('message', (message) => {
+    socket.on('message', (data) => {
         try {
-            const pacote = JSON.parse(message);
-            if (pacote.type === "REQUEST_MAP") {
-                ws.send(JSON.stringify({ type: "MAP_DATA", data: mapaDados }));
+            const msg = JSON.parse(data.toString('utf8'));
+            const { comando, username, posicao } = msg;
+
+            // 🔑 LOGAR / ENTRAR NO MAPA
+            if (comando === 'logar') {
+                meuUsuario = username || "Jogador_" + Math.floor(1000 + Math.random() * 9000);
+                console.log(`🔓 [Login] ${meuUsuario} entrou no servidor online.`);
+
+                // Salva o jogador na lista com a posição inicial padrão [0, 1, 0]
+                jogadoresOnline.set(meuUsuario, { socket: socket, posicao: [0.0, 1.0, 0.0] });
+
+                // 1. Responde para o próprio jogador que ele logou com sucesso
+                socket.send(JSON.stringify({
+                    status: "logado_com_sucesso",
+                    nome_oficial: meuUsuario
+                }));
+
+                // 2. Envia para o jogador que acabou de entrar a lista de todos os outros que já estavam lá
+                jogadoresOnline.forEach((dadosJogador, nomeJogador) => {
+                    if (nomeJogador !== meuUsuario) {
+                        socket.send(JSON.stringify({
+                            status: "player_nasceu",
+                            nome_oficial: nomeJogador,
+                            posicao: dadosJogador.posicao
+                        }));
+                    }
+                });
+
+                // 3. Avisa todos os outros jogadores da rede que um novo player nasceu
+                transmitirParaOutros(meuUsuario, {
+                    status: "player_nasceu",
+                    nome_oficial: meuUsuario,
+                    posicao: [0.0, 1.0, 0.0]
+                });
             }
-        } catch (e) {
-            console.error("[BREADCRUMB] Erro ao processar mensagem do cliente.");
+
+            // 🏃‍♂️ ATUALIZAR POSIÇÃO (MULTIPLAYER)
+            else if (comando === 'salvar_posicao') {
+                if (meuUsuario && posicao && posicao.length === 3) {
+                    const dados = jogadoresOnline.get(meuUsuario);
+                    if (dados) {
+                        dados.posicao = posicao; // Atualiza a posição na memória do servidor
+
+                        // Retransmite a nova posição para os outros jogadores verem o movimento
+                        transmitirParaOutros(meuUsuario, {
+                            status: "player_moveu",
+                            nome_oficial: meuUsuario,
+                            posicao: posicao
+                        });
+                    }
+                }
+            }
+
+        } catch (err) {
+            console.log("⚠️ [Erro] Falha ao processar pacote JSON recebido.");
         }
     });
 
-    ws.on('close', () => {
-        console.log("[MULTIPLAYER] Jogador desconectou.");
+    // ❌ QUANDO O JOGADOR FECHA O JOGO OU DESCONECTA
+    socket.on('close', () => {
+        if (meuUsuario) {
+            console.log(`❌ [Desconexão] ${meuUsuario} saiu do jogo.`);
+            jogadoresOnline.delete(meuUsuario);
+
+            // Avisa os outros jogadores para removerem o clone desse player da tela
+            transmitirParaOutros(meuUsuario, {
+                status: "player_saiu",
+                nome_oficial: meuUsuario
+            });
+        }
     });
 });
 
-// 3. INICIALIZAÇÃO BLINDADA
-async function iniciarServidor() {
-    // Primeiro carrega o mapa em segundo plano para não dar Timeout na porta
-    await carregarMapaSeguro();
-
-    server.listen(PORT, () => {
-        console.log(`\n==========================================`);
-        console.log(`  MULTIPLAYER MANAGER ONLINE NA PORTA ${PORT} `);
-        console.log(`==========================================\n`);
+// Função auxiliar para enviar pacotes para todos os jogadores conectados, exceto quem enviou
+function transmitirParaOutros(remetente, dados) {
+    const dadosString = JSON.stringify(dados);
+    jogadoresOnline.forEach((dadosJogador, nomeJogador) => {
+        if (nomeJogador !== remetente && dadosJogador.socket.readyState === WebSocket.OPEN) {
+            dadosJogador.socket.send(dadosString);
+        }
     });
 }
-
-iniciarServidor();
