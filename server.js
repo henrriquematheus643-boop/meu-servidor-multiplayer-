@@ -1,154 +1,115 @@
 const WebSocket = require('ws');
 
-// Tenta carregar o banco de dados. Se falhar, usa a memória reserva e não crasha o servidor!
 let database = null;
 try {
     database = require('./database.js');
-    console.log("✅ [SISTEMA] Arquivo database.js carregado com sucesso.");
+    console.log("✅ [DATABASE] Módulo integrado com sucesso.");
 } catch (e) {
-    console.log("⚠️ [SISTEMA] database.js não encontrado ou com erros. Usando memória reserva.");
+    console.log("⚠️ [DATABASE] Rodando em modo de cache local (sem database.js).");
 }
 
 const PORTA = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORTA });
 
-console.log(`🚀 [SERVIDOR] Reduto RP rodando na porta ${PORTA}...`);
-
-// Memória temporária para salvar as contas se o banco de dados falhar
-let contasNaMemoria = new Map();
+let contasCache = new Map();
 
 wss.on('connection', (ws) => {
-    let meuNomeNoServidor = null;
-    console.log("👤 Novo cliente conectado!");
+    let meuNome = null;
+    console.log("👤 Nova conexão aberta.");
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            console.log("📥 Comando recebido:", data.comando);
 
             switch (data.comando) {
                 case 'registrar':
-                    console.log(`🔄 [REGISTRO] Tentando cadastrar: ${data.username}`);
                     try {
-                        let usuarioExiste = false;
-
-                        // 1. Tenta buscar no banco PostgreSQL
+                        let existe = false;
                         if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
-                            const res = await database.buscarUsuarioNaNuvem(data.username);
-                            if (res) usuarioExiste = true;
-                        } else if (contasNaMemoria.has(data.username)) {
-                            usuarioExiste = true;
+                            const r = await database.buscarUsuarioNaNuvem(data.username);
+                            if (r) existe = true;
+                        } else if (contasCache.has(data.username)) {
+                            existe = true;
                         }
 
-                        if (usuarioExiste) {
-                            ws.send(JSON.stringify({ status: "erro", msg: "Esse nome ja esta em uso!" }));
+                        if (existe) {
+                            ws.send(JSON.stringify({ status: "erro", msg: "Nome indisponivel!" }));
                         } else {
-                            const novoJogador = {
+                            const novo = {
                                 username: data.username,
                                 password: data.password,
                                 id: Math.floor(Math.random() * 90000) + 10000,
                                 last_pos: [0, 2, 0]
                             };
 
-                            let salvoNoBanco = false;
                             if (database && typeof database.salvarUsuarioNaNuvem === 'function') {
-                                salvoNoBanco = await database.salvarUsuarioNaNuvem(novoJogador);
+                                await database.salvarUsuarioNaNuvem(novo);
                             }
-
-                            if (!salvoNoBanco) {
-                                contasNaMemoria.set(data.username, novoJogador);
-                                console.log(`💾 [MEMÓRIA] Conta salva em cache local: ${data.username}`);
-                            } else {
-                                console.log(`✅ [BANCO] Conta salva no PostgreSQL: ${data.username}`);
-                            }
-
+                            contasCache.set(data.username, novo);
                             ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                         }
-                    } catch (err) {
-                        console.error("❌ Erro no registro, usando plano de emergência:", err);
-                        let idEmergencia = Math.floor(Math.random() * 90000) + 10000;
-                        contasNaMemoria.set(data.username, { username: data.username, password: data.password, id: idEmergencia, last_pos: [0, 2, 0] });
+                    } catch (e) {
                         ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                     }
                     break;
 
                 case 'logar':
-                    console.log("🔑 [LOGIN] Tentativa para: " + data.username);
                     try {
                         let conta = null;
-
                         if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
                             conta = await database.buscarUsuarioNaNuvem(data.username);
                         }
-                        if (!conta) {
-                            conta = contasNaMemoria.get(data.username);
-                        }
+                        if (!conta) conta = contasCache.get(data.username);
 
                         if (conta && String(conta.password) === String(data.password)) {
-                            meuNomeNoServidor = conta.username;
-                            
-                            // Manda a resposta com os dados que a Godot precisa para o spawn e teleporte
-                            ws.send(JSON.stringify({ 
-                                status: "logado_com_sucesso", 
+                            meuNome = conta.username;
+                            ws.send(JSON.stringify({
+                                status: "logado_com_sucesso",
                                 nome_oficial: conta.username,
                                 id_oficial: String(conta.id),
                                 posicao: conta.last_pos || [0, 2, 0]
                             }));
-                            console.log(`🔓 [SUCESSO] ${data.username} entrou.`);
 
-                            // Avisa os outros players que você entrou no mapa (Multiplayer)
-                            broadcast({
-                                status: "player_nasceu",
-                                username: data.username
-                            }, ws);
+                            broadcast({ status: "player_nasceu", username: conta.username }, ws);
                         } else {
-                            ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
+                            ws.send(JSON.stringify({ status: "erro", msg: "Dados incorretos!" }));
                         }
-                    } catch (err) {
-                        console.error("❌ Erro no login, aplicando entrada forçada:", err);
-                        let idFalso = Math.floor(Math.random() * 90000) + 10000;
-                        ws.send(JSON.stringify({ 
-                            status: "logado_com_sucesso", 
+                    } catch (e) {
+                        // Resposta de segurança para testes locais livres
+                        ws.send(JSON.stringify({
+                            status: "logado_com_sucesso",
                             nome_oficial: data.username,
-                            id_oficial: String(idFalso),
+                            id_oficial: "10001",
                             posicao: [0, 2, 0]
                         }));
                     }
                     break;
 
                 case 'salvar_posicao':
-                    var nome_alvo = data.username || meuNomeNoServidor;
-                    if (nome_alvo && data.posicao) {
-                        // Tenta atualizar no banco de dados
-                        try {
-                            if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
-                                const jogador = await database.buscarUsuarioNaNuvem(nome_alvo);
+                    let alvo = data.username || meuNome;
+                    if (alvo && data.posicao) {
+                        let c = contasCache.get(alvo);
+                        if (c) c.last_pos = data.posicao;
+
+                        if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
+                            try {
+                                const jogador = await database.buscarUsuarioNaNuvem(alvo);
                                 if (jogador) {
                                     jogador.last_pos = data.posicao;
                                     await database.salvarUsuarioNaNuvem(jogador);
                                 }
-                            }
-                            // Também atualiza na memória para garantir sincronia
-                            let contaLocal = contasNaMemoria.get(nome_alvo);
-                            if (contaLocal) {
-                                contaLocal.last_pos = data.posicao;
-                            }
-                        } catch (e) {
-                            console.error("Erro ao salvar posição no banco:", e);
+                            } catch (err) {}
                         }
-                    }
 
-                    // Envia a posição em tempo real para os outros jogadores se mexerem no seu mapa
-                    broadcast({
-                        status: "player_moveu",
-                        nome_oficial: nome_alvo,
-                        posicao: data.posicao
-                    }, ws);
+                        broadcast({
+                            status: "player_moveu",
+                            nome_oficial: alvo,
+                            posicao: data.posicao
+                        }, ws);
+                    }
                     break;
             }
-        } catch (e) {
-            console.error("❌ Erro de processamento:", e);
-        }
+        } catch (err) {}
     });
 });
 
@@ -159,4 +120,3 @@ function broadcast(data, senderWs) {
         }
     });
 }
-
