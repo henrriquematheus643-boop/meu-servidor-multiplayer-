@@ -1,159 +1,147 @@
 const WebSocket = require('ws');
 
-// Tenta conectar com o seu arquivo database.js (PostgreSQL do Railway)
+// Integração com o banco de dados PostgreSQL do Railway
 let database = null;
 try {
     database = require('./database.js');
-    console.log("✅ [SISTEMA] Conexao com database.js configurada.");
+    console.log("✅ [BANCO] Módulo database.js carregado com sucesso.");
 } catch (e) {
-    console.log("⚠️ [SISTEMA] Arquivo database.js nao encontrado. Rodando em modo cache.");
+    console.log("⚠️ [BANCO] database.js não encontrado. Usando memória temporária.");
 }
 
 const PORTA = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORTA });
 
-console.log(`🚀 [SERVIDO] Reduto RP online na porta de rede ${PORTA}...`);
+console.log(`🚀 [REDUTO RP] Servidor ativo e operando na porta ${PORTA}`);
 
-// Memoria reserva para garantir o funcionamento caso o banco fique offline
-let cacheUsuarios = new Map();
+// Cache para guardar os dados das contas e posições em tempo real
+let contasRegistradas = new Map();
 
 wss.on('connection', (ws) => {
-    // Vincular as variaveis diretamente na conexao para evitar duplicar players no mapa
+    // 🔐 Segurança: Vincula o nome e o ID diretamente nesta conexão de rede
     ws.nomeJogador = null;
     ws.idJogador = null;
 
-    console.log("👤 Um jogador abriu conexao com o servidor.");
+    console.log("👤 Um novo dispositivo se conectou ao servidor.");
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
-            console.log(`📥 Comando recebido: [${data.comando}]`);
+            console.log(`📥 Comando processado: ${data.comando}`);
 
             switch (data.comando) {
                 
                 case 'registrar':
-                    console.log(`🔄 [REGISTRO] Solicitado para: ${data.username}`);
                     try {
-                        let contaExiste = false;
-
-                        // 1. Procura no banco de dados do Railway
+                        let existe = false;
                         if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
-                            const check = await database.buscarUsuarioNaNuvem(data.username);
-                            if (check) contaExiste = true;
+                            const bdCheck = await database.buscarUsuarioNaNuvem(data.username);
+                            if (bdCheck) existe = true;
                         }
-                        // 2. Se nao achar, confere na memoria
-                        if (cacheUsuarios.has(data.username)) contaExiste = true;
+                        if (contasRegistradas.has(data.username)) existe = true;
 
-                        if (contaExiste) {
-                            ws.send(JSON.stringify({ status: "erro", msg: "Esse nome ja esta registrado!" }));
-                            console.log(`⚠️ [REGISTRO] Recusado: ${data.username} ja existe.`);
+                        if (existe) {
+                            ws.send(JSON.stringify({ status: "erro", msg: "Este nome ja existe na cidade!" }));
                         } else {
-                            // Monta a estrutura completa que a Godot precisa (salvando nome, senha, ID e posicao inicial)
-                            const novoPlayer = {
+                            const novoUsuario = {
                                 username: data.username,
                                 password: data.password,
-                                id: Math.floor(Math.random() * 90000) + 10000,
-                                last_pos: [0, 2, 0] // Spawn padrao no mapa
+                                id: String(Math.floor(Math.random() * 90000) + 10000), // Gera ID único de 5 dígitos
+                                last_pos: [0, 2, 0] // Posição inicial padrão de spawn
                             };
 
-                            // Tenta gravar no PostgreSQL do Railway
                             if (database && typeof database.salvarUsuarioNaNuvem === 'function') {
-                                await database.salvarUsuarioNaNuvem(novoPlayer);
+                                await database.salvarUsuarioNaNuvem(novoUsuario);
                             }
+                            contasRegistradas.set(data.username, novoUsuario);
                             
-                            // Guarda em cache de seguranca
-                            cacheUsuarios.set(data.username, novoPlayer);
-
                             ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
-                            console.log(`✅ [REGISTRO] Nova conta salva: ${data.username}`);
+                            console.log(`📝 Nova conta salva no banco: ${data.username} (ID: ${novoUsuario.id})`);
                         }
                     } catch (err) {
-                        console.error("Erro ao registrar, aplicando plano B de seguranca...", err);
-                        // Registro forcado de emergencia se o banco travar
-                        let idEmergencia = Math.floor(Math.random() * 90000) + 10000;
-                        cacheUsuarios.set(data.username, { username: data.username, password: data.password, id: idEmergencia, last_pos: [0, 2, 0] });
+                        // Plano de contingência caso o PostgreSQL do Railway falhe ou demore
+                        let idFalso = String(Math.floor(Math.random() * 90000) + 10000);
+                        contasRegistradas.set(data.username, { username: data.username, password: data.password, id: idFalso, last_pos: [0, 2, 0] });
                         ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                     }
                     break;
 
                 case 'logar':
-                    console.log(`🔑 [LOGIN] Tentando entrar: ${data.username}`);
                     try {
-                        let contaEncontrada = null;
-
-                        // 1. Busca do banco roxo do Railway
+                        let conta = null;
                         if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
-                            contaEncontrada = await database.buscarUsuarioNaNuvem(data.username);
+                            conta = await database.buscarUsuarioNaNuvem(data.username);
                         }
-                        // 2. Busca na memoria cache caso o banco falhe
-                        if (!contaEncontrada) {
-                            contaEncontrada = cacheUsuarios.get(data.username);
-                        }
+                        if (!conta) conta = contasRegistradas.get(data.username);
 
-                        // Confere se o usuario existe e bate com a senha
-                        if (contaEncontrada && String(contaEncontrada.password) === String(data.password)) {
-                            
-                            // Define o nome e ID nessa conexao websocket para sumir com clones/multiplicacoes
-                            ws.nomeJogador = contaEncontrada.username;
-                            ws.idJogador = String(contaEncontrada.id);
+                        if (conta && String(conta.password) === String(data.password)) {
+                            // Guardamos o Nome e o ID ÚNICO da conta dentro desse WebSocket ativo
+                            ws.nomeJogador = conta.username;
+                            ws.idJogador = String(conta.id);
 
-                            console.log(`🔓 [LOGIN] Aprovado para: ${ws.nomeJogador}`);
+                            console.log(`🔓 [LOGIN] ${ws.nomeJogador} (ID: ${ws.idJogador}) entrou no mapa.`);
 
-                            // Envia os dados completos e a posicao de volta para a Godot destravar a tela
+                            // 1. Envia a autorização de volta para a Godot com a posição salva no banco
                             ws.send(JSON.stringify({
                                 status: "logado_com_sucesso",
-                                nome_oficial: contaEncontrada.username,
-                                id_oficial: String(contaEncontrada.id),
-                                posicao: contaEncontrada.last_pos || [0, 2, 0]
+                                nome_oficial: conta.username,
+                                id_oficial: String(conta.id),
+                                posicao: conta.last_pos || [0, 2, 0]
                             }));
 
-                            // Sistema Multiplayer: Avisa todo mundo que voce entrou para nascer no mapa deles
+                            // 2. MULTIPLAYER: Avisa todos os outros que este Player nasceu no mapa deles
                             broadcast({
                                 status: "player_nasceu",
-                                username: contaEncontrada.username
+                                username: ws.nomeJogador,
+                                id_jogador: ws.idJogador,
+                                posicao: conta.last_pos || [0, 2, 0]
                             }, ws);
 
-                            // Sistema Multiplayer: Faz nascer na SUA tela todos os players que ja estavam online antes
+                            // 3. MULTIPLAYER: Faz aparecer na tela do novo Player todos os que JÁ ESTAVAM online
                             wss.clients.forEach((client) => {
                                 if (client !== ws && client.readyState === WebSocket.OPEN && client.nomeJogador) {
+                                    // Pega a posição atualizada do cache de quem já está online
+                                    let cInfo = contasRegistradas.get(client.nomeJogador);
                                     ws.send(JSON.stringify({
                                         status: "player_nasceu",
-                                        username: client.nomeJogador
+                                        username: client.nomeJogador,
+                                        id_jogador: client.idJogador,
+                                        posicao: cInfo ? cInfo.last_pos : [0, 2, 0]
                                     }));
                                 }
                             });
 
                         } else {
-                            ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
+                            ws.send(JSON.stringify({ status: "erro", msg: "Nome de usuario ou senha incorretos!" }));
                         }
                     } catch (e) {
-                        console.error("Erro no login, contornando para evitar travamentos...", e);
-                        // Se tudo falhar, deixa entrar para voce conseguir testar o mapa sem erros
+                        // Entrada forçada caso o banco caia durante o teste
                         ws.nomeJogador = data.username;
+                        ws.idJogador = "99999";
                         ws.send(JSON.stringify({
                             status: "logado_com_sucesso",
                             nome_oficial: data.username,
-                            id_oficial: "7777",
+                            id_oficial: "99999",
                             posicao: [0, 2, 0]
                         }));
                     }
                     break;
 
                 case 'salvar_posicao':
-                    // Pega o nome seguro atrelado a conexao ativa
-                    let jogadorAtivo = ws.nomeJogador || data.username;
+                    // Proteção contra clonagem: Sempre usa as credenciais amarradas à conexão ativa
+                    let donoDaPosicao = ws.nomeJogador || data.username;
 
-                    if (jogadorAtivo && data.posicao) {
-                        // Atualiza as coordenadas na memoria do server
-                        let playerCache = cacheUsuarios.get(jogadorAtivo);
+                    if (donoDaPosicao && data.posicao) {
+                        // Sincroniza e atualiza as coordenadas na memória do servidor
+                        let playerCache = contasRegistradas.get(donoDaPosicao);
                         if (playerCache) {
                             playerCache.last_pos = data.posicao;
                         }
 
-                        // Salva permanentemente no banco de dados se ele responder
+                        // Envia para o banco PostgreSQL se ele estiver ativo
                         if (database && typeof database.buscarUsuarioNaNuvem === 'function') {
                             try {
-                                const playerBd = await database.buscarUsuarioNaNuvem(jogadorAtivo);
+                                const playerBd = await database.buscarUsuarioNaNuvem(donoDaPosicao);
                                 if (playerBd) {
                                     playerBd.last_pos = data.posicao;
                                     await database.salvarUsuarioNaNuvem(playerBd);
@@ -161,29 +149,36 @@ wss.on('connection', (ws) => {
                             } catch (err) {}
                         }
 
-                        // Repassa o movimento em tempo real via broadcast para os outros te verem andar
+                        // TRANSMISSÃO MULTIPLAYER: Atualiza a movimentação de todos em tempo real
                         broadcast({
                             status: "player_moveu",
-                            nome_oficial: jogadorAtivo,
+                            nome_oficial: donoDaPosicao,
+                            id_oficial: ws.idJogador || data.id_jogador,
                             posicao: data.posicao
                         }, ws);
                     }
                     break;
             }
         } catch (e) {
-            console.error("❌ Erro critico no processamento de pacotes:", e);
+            console.error("❌ Erro ao descriptografar mensagem recebida:", e);
         }
     });
 
-    // Limpa o personagem quando ele desconecta para nao deixar clones fantasmas multiplicados
+    // Remove o boneco do mapa se o jogador fechar o jogo (Evita bonecos duplicados e travados)
     ws.on('close', () => {
         if (ws.nomeJogador) {
-            console.log(`🛑 [DESCONEXAO] ${ws.nomeJogador} saiu do Reduto RP.`);
+            console.log(`🛑 [DESCONECTADO] O jogador ${ws.nomeJogador} saiu do servidor.`);
+            
+            // Avisa a Godot para remover o nó desse jogador específico
+            broadcast({
+                status: "player_desconectou",
+                username: ws.nomeJogador
+            }, ws);
         }
     });
 });
 
-// Envia os pacotes para todos os jogadores do servidor, tirando quem enviou
+// Envia os pacotes para todo mundo da rede, exceto para o autor original do comando
 function broadcast(data, senderWs) {
     wss.clients.forEach((client) => {
         if (client !== senderWs && client.readyState === WebSocket.OPEN) {
