@@ -1,88 +1,69 @@
-const WebSocket = require('ws');
-const database = require('./database'); 
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws'); // Ou socket.io, dependendo do seu sistema
+const fs = require('fs').promises; // Usando promises para NÃO travar o servidor
 
-const PORT = process.env.PORT || 8080;
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-const bancoLocalRender = new Map();
-const playersOnline = new Map();
+const PORT = 3000;
+let mapaDados = null;
 
-async function iniciarServidor() {
+// 1. CARREGAMENTO DO MAPA ULTRA-LEVE (ASSÍNCRONO)
+// Isso impede que o Node.js trave o loop de eventos e fique "Offline"
+async function carregarMapaSeguro() {
     try {
-        console.log("🔄 [Render] Inicializando Servidor...");
-        await database.conectarBanco();
-        
-        // Carrega dados iniciais
-        const resultado = await database.db.query('SELECT username, password, id_oficial, pos_x, pos_y, pos_z FROM jogadores');
-        resultado.rows.forEach(conta => {
-            bancoLocalRender.set(conta.username, conta);
-        });
-        
-        const server = new WebSocket.Server({ port: PORT });
-        console.log(`🚀 [Reduto RP] Online na porta ${PORT}`);
-
-        server.on('connection', (socket) => {
-            let meuUsuario = null;
-
-            socket.on('message', async (data) => {
-                const msg = JSON.parse(data.toString());
-                const { comando, username, password, posicao } = msg;
-
-                // --- SISTEMA DE LOGIN ---
-                if (comando === 'logar') {
-                    const conta = bancoLocalRender.get(username);
-                    if (conta && conta.password === password) {
-                        meuUsuario = username;
-                        playersOnline.set(username, socket);
-                        
-                        socket.send(JSON.stringify({
-                            status: 'logado_com_sucesso',
-                            nome_oficial: username,
-                            posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
-                        }));
-
-                        // Avisa os outros que você chegou
-                        transmitirParaOutros(username, {
-                            status: 'player_nasceu',
-                            nome_oficial: username,
-                            posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
-                        });
-                    }
-                }
-
-                // --- SISTEMA DE MOVIMENTAÇÃO (Sincronização) ---
-                else if (comando === 'salvar_posicao') {
-                    if (meuUsuario) {
-                        const conta = bancoLocalRender.get(meuUsuario);
-                        conta.pos_x = posicao[0];
-                        conta.pos_y = posicao[1];
-                        conta.pos_z = posicao[2];
-
-                        transmitirParaOutros(meuUsuario, {
-                            status: 'player_moveu',
-                            nome_oficial: meuUsuario,
-                            posicao: posicao
-                        });
-                        database.salvarPosicaoJogador(meuUsuario, posicao).catch(() => {});
-                    }
-                }
-            });
-
-            socket.on('close', () => {
-                if (meuUsuario) {
-                    playersOnline.delete(meuUsuario);
-                    transmitirParaOutros(meuUsuario, { status: 'player_saiu', nome_oficial: meuUsuario });
-                }
-            });
-        });
-    } catch (err) { console.error("Erro:", err); }
+        console.log("[SERVER] Carregando dados da cidade de forma otimizada...");
+        // Substitua pelo caminho real do seu arquivo de dados da cidade (JSON ou TSCN)
+        const data = await fs.readFile('./mapa_cidade.json', 'utf8'); 
+        mapaDados = JSON.parse(data);
+        console.log("[SERVER] Cidade carregada com sucesso! Pronto para o Multiplayer.");
+    } catch (err) {
+        console.error("[ERRO] Não foi possível carregar o mapa, mas o servidor continuará ONLINE:", err.message);
+        // Mantém uma array vazia para o servidor não crashar se o mapa sumir
+        mapaDados = []; 
+    }
 }
 
-function transmitirParaOutros(remetente, dados) {
-    const msg = JSON.stringify(dados);
-    playersOnline.forEach((s, nome) => {
-        if (nome !== remetente && s.readyState === WebSocket.OPEN) s.send(msg);
+// 2. GERENCIADOR DO MULTIPLAYER (LÓGICA DE REDE)
+wss.on('connection', (ws) => {
+    console.log("[MULTIPLAYER] Novo jogador conectado!");
+
+    // Envia o status online e os dados do mapa imediatamente para o Player
+    ws.send(JSON.stringify({
+        type: "STATUS",
+        online: true,
+        mensagem: "Conectado ao Multiplayer Manager"
+    }));
+
+    // Se o player pedir o mapa, envia sem travar os outros jogadores
+    ws.on('message', (message) => {
+        try {
+            const pacote = JSON.parse(message);
+            if (pacote.type === "REQUEST_MAP") {
+                ws.send(JSON.stringify({ type: "MAP_DATA", data: mapaDados }));
+            }
+        } catch (e) {
+            console.error("[BREADCRUMB] Erro ao processar mensagem do cliente.");
+        }
+    });
+
+    ws.on('close', () => {
+        console.log("[MULTIPLAYER] Jogador desconectou.");
+    });
+});
+
+// 3. INICIALIZAÇÃO BLINDADA
+async function iniciarServidor() {
+    // Primeiro carrega o mapa em segundo plano para não dar Timeout na porta
+    await carregarMapaSeguro();
+
+    server.listen(PORT, () => {
+        console.log(`\n==========================================`);
+        console.log(`  MULTIPLAYER MANAGER ONLINE NA PORTA ${PORT} `);
+        console.log(`==========================================\n`);
     });
 }
 
 iniciarServidor();
-
