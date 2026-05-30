@@ -3,20 +3,21 @@ const database = require('./database');
 
 const PORT = process.env.PORT || 8080;
 
-// 🧠 A MEMÓRIA DO RENDER (Funciona como o banco de dados principal do jogo)
+// 🧠 A MEMÓRIA DO RENDER (Cofre veloz de contas)
 const bancoLocalRender = new Map();
+
+// 🌐 LISTA DE JOGADORES ONLINE AGORA (Para o sistema multiplayer se multiplicar)
+const clientesConectados = new Map();
 
 async function iniciarServidor() {
     try {
         console.log("🔄 [Render] Inicializando o Servidor Principal...");
         
-        // Conecta ao Supabase apenas para puxar o backup das contas salvas
+        // Carrega o backup do Supabase para a memória veloz do Render
         try {
             await database.conectarBanco();
             console.log("📥 [Backup] Carregando contas antigas do Supabase para a memória do Render...");
             
-            // Uma função simples para puxar todos os jogadores cadastrados de uma vez só no início
-            // Se falhar ou estiver sem banco ainda, o servidor inicia mesmo assim!
             const comandoSQL = 'SELECT username, password, id_oficial, pos_x, pos_y, pos_z FROM jogadores';
             if (database.db && typeof database.db.query === 'function') {
                 const resultado = await database.db.query(comandoSQL);
@@ -30,36 +31,36 @@ async function iniciarServidor() {
                         pos_z: conta.pos_z || 0.0
                     });
                 });
-                console.log(`📊 [Backup] ${bancoLocalRender.size} contas carregadas com sucesso na memória!`);
+                console.log(`📊 [Backup] ${bancoLocalRender.size} contas carregadas na memória!`);
             }
         } catch (erroBanco) {
-            console.log("⚠️ [Aviso] Não foi possível carregar o backup do Supabase. Usando armazenamento limpo do Render.");
+            console.log("⚠️ [Aviso] Sem backup do Supabase. Usando armazenamento limpo do Render.");
         }
         
         const server = new WebSocket.Server({ port: PORT });
-        console.log(`🚀 [Reduto RP] Servidor Online na memória do Render na porta ${PORT}`);
+        console.log(`🚀 [Reduto RP] Servidor Online com Multiplayer ativo na porta ${PORT}`);
 
         server.on('connection', (socket) => {
+            // Guarda o nome do usuário assim que ele logar para sabermos quem desconectou depois
+            let usuarioDesteSocket = null;
+
             socket.on('message', async (data) => {
                 try {
                     const textoLimpado = data.toString('utf8');
                     const msg = JSON.parse(textoLimpado);
                     const { comando, username, password, posicao } = msg;
 
-                    // 📝 SISTEMA DE REGISTRO - RODA INSTANTÂNEO NO RENDER
+                    // 📝 SISTEMA DE REGISTRO
                     if (comando === 'registrar') {
                         if (!username || !password) {
                             socket.send(JSON.stringify({ status: 'erro', msg: 'Campos em branco!' }));
                             return;
                         }
-
-                        // Verifica se o usuário já existe na memória local do Render
                         if (bancoLocalRender.has(username)) {
                             socket.send(JSON.stringify({ status: 'erro', msg: 'Esta conta ja existe no Reduto!' }));
                             return;
                         }
 
-                        // Cria a conta direto na memória do Render imediatamente
                         const novoIdOficial = 'ID_' + Math.floor(1000 + Math.random() * 9000);
                         const novosDadosJogador = {
                             username: username,
@@ -71,68 +72,105 @@ async function iniciarServidor() {
                         };
                         
                         bancoLocalRender.set(username, novosDadosJogador);
-                        console.log(`📝 [Render-Memória] Nova conta criada direto no servidor: ${username}`);
-                        
-                        // Responde na hora para a Godot (Sem lag)
                         socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
 
-                        // 🔄 CÓPIA EM SEGUNDO PLANO: Envia uma cópia em silêncio para salvar no Supabase
-                        database.registrarJogador(username, password).catch(err => {
-                            console.error(`⚠️ [Cópia-Erro] Falha ao enviar cópia de cadastro de ${username} para o Supabase.`);
-                        });
+                        database.registrarJogador(username, password).catch(err => {});
                     }
 
-                    // 🔑 SISTEMA DE LOGIN - CONSULTA A MEMÓRIA DO RENDER DIRECT
+                    // 🔑 SISTEMA DE LOGIN (CONECTA O PLAYER NA REDE MULTIPLAYER)
                     else if (comando === 'logar') {
                         if (!username || !password) {
                             socket.send(JSON.stringify({ status: 'erro', msg: 'Preencha os campos!' }));
                             return;
                         }
 
-                        // Procura o jogador na memória veloz do Render
                         const conta = bancoLocalRender.get(username);
 
                         if (conta && conta.password === password) {
-                            console.log(`🔓 [Acesso-Local] ${username} entrou usando a memória do Render!`);
+                            usuarioDesteSocket = username;
                             
+                            // 🔥 ENTRADA MULTIPLAYER: Salva o socket do jogador na lista de ativos
+                            clientesConectados.set(username, socket);
+                            
+                            console.log(`🔓 [Acesso-Multiplayer] ${username} entrou na rede.`);
+                            
+                            // Envia os dados de sucesso para quem acabou de logar
                             socket.send(JSON.stringify({
                                 status: 'logado_com_sucesso',
                                 id_oficial: conta.id_oficial,
                                 nome_oficial: conta.username,
                                 posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
                             }));
+
+                            // 🔥 MULTIPLICAÇÃO: Avisa a TODOS os outros jogadores que esse cara nasceu
+                            transmitirParaTodos(username, {
+                                status: 'player_nasceu',
+                                id_oficial: conta.id_oficial,
+                                nome_oficial: conta.username,
+                                posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
+                            });
                         } else {
                             socket.send(JSON.stringify({ status: 'erro', msg: 'Usuario ou senha incorretos!' }));
                         }
                     }
 
-                    // 📍 SISTEMA MULTIPLAYER DE POSIÇÃO - SALVA NO RENDER E DEPOIS FAZ CÓPIA
+                    // 📍 SISTEMA MULTIPLAYER DE MOVIMENTAÇÃO (ATUALIZAÇÃO EM TEMPO REAL)
                     else if (comando === 'salvar_posicao') {
                         if (username && posicao && posicao.length === 3) {
                             const conta = bancoLocalRender.get(username);
                             if (conta) {
-                                // Atualiza na memória do Render de forma instantânea
+                                // 1. Atualiza na memória interna do Render
                                 conta.pos_x = posicao[0];
                                 conta.pos_y = posicao[1];
                                 conta.pos_z = posicao[2];
 
-                                // 🔄 CÓPIA EM SEGUNDO PLANO: Envia a atualização para o Supabase sem travar o jogo
-                                database.salvarPosicaoJogador(username, posicao).catch(err => {
-                                    // Ignora erros de rede do banco para o jogo não cair
+                                // 2. 🔥 MULTIPLICAÇÃO: Envia a nova posição dele para os outros players verem ele andando!
+                                transmitirParaTodos(username, {
+                                    status: 'player_moveu',
+                                    nome_oficial: username,
+                                    id_oficial: conta.id_oficial,
+                                    posicao: posicao
                                 });
+
+                                // 3. Envia a cópia de backup em silêncio para o Supabase
+                                database.salvarPosicaoJogador(username, posicao).catch(err => {});
                             }
                         }
                     }
 
                 } catch (e) {
-                    // Proteção de pacotes
+                    // Proteção contra dados corrompidos
+                }
+            });
+
+            // ❌ QUANDO O JUGADOR FECHA O JOGO: Remove ele e avisa os outros sumirem com o boneco
+            socket.on('close', () => {
+                if (usuarioDesteSocket) {
+                    console.log(`❌ [Multiplayer] ${usuarioDesteSocket} saiu do jogo.`);
+                    clientesConectados.delete(usuarioDesteSocket);
+                    
+                    // Avisa a todos para apagarem a cópia duplicada desse boneco no mapa
+                    transmitirParaTodos(usuarioDesteSocket, {
+                        status: 'player_saiu',
+                        nome_oficial: usuarioDesteSocket
+                    });
                 }
             });
         });
 
     } catch (err) {
-        console.error("❌ Erro fatal ao iniciar o servidor principal:", err.message);
+        console.error("❌ Erro fatal no servidor principal:", err.message);
     }
+}
+
+// 📡 Função auxiliar para enviar dados para todo mundo, menos para o próprio dono dos dados
+function transmitirParaTodos(remetente, dados) {
+    const pacoteTexto = JSON.stringify(dados);
+    clientesConectados.forEach((socketCliente, nomeCliente) => {
+        if (nomeCliente !== remetente && socketCliente.readyState === WebSocket.OPEN) {
+            socketCliente.send(pacoteTexto);
+        }
+    });
 }
 
 iniciarServidor();
