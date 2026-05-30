@@ -3,7 +3,7 @@ const { Client } = require('pg');
 // Pega o link oficial do banco que você colocou no painel do Render
 const linkBanco = process.env.DATABASE_URL;
 
-// Cria o cliente apontando ÚNICA e EXCLUSIVAMENTE para o link da nuvem
+// Configuração do cliente apontando ÚNICA e EXCLUSIVAMENTE para o link da nuvem
 const db = new Client({
     connectionString: linkBanco,
     ssl: {
@@ -11,10 +11,11 @@ const db = new Client({
     }
 });
 
-// Inicializa a conexão de forma direta
+// Inicializa a conexão de forma direta e segura
 async function conectarBanco() {
     if (!linkBanco) {
-        console.error("❌ [Database] ERRO: A variável DATABASE_URL está vazia no Render!");
+        console.error("❌ [Database] ERRO CRÍTICO: A variável DATABASE_URL está vazia no Render!");
+        console.error("👉 Vá no painel do Render -> Environment Variables e adicione DATABASE_URL com o seu link do Supabase (postgresql://...)");
         return;
     }
     
@@ -34,13 +35,14 @@ async function conectarBanco() {
                 pos_z REAL DEFAULT 0
             );
         `);
-        console.log("📊 [Database] Tabela 'jogadores' pronta para o uso.");
+        console.log("📊 [Database] Tabela 'jogadores' verificada e pronta para o uso.");
     } catch (erro) {
-        console.error("❌ [Database] Erro fatal na conexão:", erro.message);
+        console.error("❌ [Database] Erro fatal na conexão com o banco:", erro.message);
+        throw erro; // Repassa o erro para o server.js travar o início e não bugar
     }
 }
 
-// Salva nova conta com ID único de RP
+// Salva nova conta com ID único de RP (Ex: ID_4832)
 async function registrarJogador(username, password) {
     const id_oficial = 'ID_' + Math.floor(1000 + Math.random() * 9000);
     const comandoSQL = 'INSERT INTO jogadores(username, password, id_oficial) VALUES($1, $2, $3)';
@@ -55,13 +57,13 @@ async function buscarJogador(username) {
     return resultado.rows[0];
 }
 
-// Salva a posição 3D do boneco no mapa do jogo
+// Salva a posição 3D do boneco no mapa do jogo (Multiplayer)
 async function salvarPosicaoJogador(username, posicao) {
     const comandoSQL = 'UPDATE jogadores SET pos_x = $1, pos_y = $2, pos_z = $3 WHERE username = $4';
     await db.query(comandoSQL, [posicao[0], posicao[1], posicao[2], username]);
 }
 
-// Exporta o sistema limpo
+// Exporta o sistema limpo para o server.js usar
 module.exports = {
     conectarBanco,
     registrarJogador,
