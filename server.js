@@ -6,13 +6,13 @@ try {
     database = require('./database.js');
     console.log("✅ [SISTEMA] Conexao com database.js configurada.");
 } catch (e) {
-    console.log("⚠️ [SISTEMA] Arquivo database.js nao encontrado. Rodando em modo cache.");
+    console.log("⚠️ [SISTEMA] database.js nao encontrado ou com erros. Usando cache local.");
 }
 
 const PORTA = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORTA });
 
-console.log(`🚀 [SERVIDO] Reduto RP online na porta de rede ${PORTA}...`);
+console.log(`🚀 [SERVIDOR] Reduto RP online na porta de rede ${PORTA}...`);
 
 // Memoria reserva para garantir o funcionamento caso o banco fique offline
 let cacheUsuarios = new Map();
@@ -52,7 +52,7 @@ wss.on('connection', (ws) => {
                             const novoPlayer = {
                                 username: data.username,
                                 password: data.password,
-                                id: Math.floor(Math.random() * 90000) + 10000,
+                                id: String(Math.floor(Math.random() * 90000) + 10000),
                                 last_pos: [0, 2, 0] // Spawn padrao no mapa
                             };
 
@@ -70,7 +70,7 @@ wss.on('connection', (ws) => {
                     } catch (err) {
                         console.error("Erro ao registrar, aplicando plano B de seguranca...", err);
                         // Registro forcado de emergencia se o banco travar
-                        let idEmergencia = Math.floor(Math.random() * 90000) + 10000;
+                        let idEmergencia = String(Math.floor(Math.random() * 90000) + 10000);
                         cacheUsuarios.set(data.username, { username: data.username, password: data.password, id: idEmergencia, last_pos: [0, 2, 0] });
                         ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
                     }
@@ -110,15 +110,20 @@ wss.on('connection', (ws) => {
                             // Sistema Multiplayer: Avisa todo mundo que voce entrou para nascer no mapa deles
                             broadcast({
                                 status: "player_nasceu",
-                                username: contaEncontrada.username
+                                username: contaEncontrada.username,
+                                id_jogador: ws.idJogador,
+                                posicao: contaEncontrada.last_pos || [0, 2, 0]
                             }, ws);
 
                             // Sistema Multiplayer: Faz nascer na SUA tela todos os players que ja estavam online antes
                             wss.clients.forEach((client) => {
                                 if (client !== ws && client.readyState === WebSocket.OPEN && client.nomeJogador) {
+                                    let cInfo = cacheUsuarios.get(client.nomeJogador);
                                     ws.send(JSON.stringify({
                                         status: "player_nasceu",
-                                        username: client.nomeJogador
+                                        username: client.nomeJogador,
+                                        id_jogador: client.idJogador,
+                                        posicao: cInfo ? cInfo.last_pos : [0, 2, 0]
                                     }));
                                 }
                             });
@@ -130,10 +135,11 @@ wss.on('connection', (ws) => {
                         console.error("Erro no login, contornando para evitar travamentos...", e);
                         // Se tudo falhar, deixa entrar para voce conseguir testar o mapa sem erros
                         ws.nomeJogador = data.username;
+                        ws.idJogador = "77777";
                         ws.send(JSON.stringify({
                             status: "logado_com_sucesso",
                             nome_oficial: data.username,
-                            id_oficial: "7777",
+                            id_oficial: "77777",
                             posicao: [0, 2, 0]
                         }));
                     }
@@ -165,13 +171,14 @@ wss.on('connection', (ws) => {
                         broadcast({
                             status: "player_moveu",
                             nome_oficial: jogadorAtivo,
+                            id_oficial: ws.idJogador || data.id_jogador,
                             posicao: data.posicao
                         }, ws);
                     }
                     break;
             }
         } catch (e) {
-            console.error("❌ Erro critico no processamento de pacotes:", e);
+            console.error("❌ Erro no processamento de pacotes:", e);
         }
     });
 
@@ -179,6 +186,10 @@ wss.on('connection', (ws) => {
     ws.on('close', () => {
         if (ws.nomeJogador) {
             console.log(`🛑 [DESCONEXAO] ${ws.nomeJogador} saiu do Reduto RP.`);
+            broadcast({
+                status: "player_desconectou",
+                username: ws.nomeJogador
+            }, ws);
         }
     });
 });
