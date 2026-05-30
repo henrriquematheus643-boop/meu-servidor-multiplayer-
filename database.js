@@ -1,96 +1,70 @@
-const { Pool } = require('pg');
+const WebSocket = require('ws');
+// Importa o sistema do banco de dados que estruturamos
+const database = require('./database');
 
-// 🚀 CONFIGURAÇÃO OFICIAL COMPATÍVEL COM O BANCO DE DADOS DO RENDER
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        // O Render exige essa configuração para aceitar conexões externas de banco de dados
-        rejectUnauthorized: false
-    }
-});
+const PORT = process.env.PORT || 8080;
 
-// Força a criação da tabela correta se ela não existir no seu banco do Render
-const inicializarBanco = async () => {
-    const queryTabela = `
-        CREATE TABLE IF NOT EXISTS usuarios_galaxy (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            last_pos TEXT DEFAULT '[0, 2, 0]'
-        );
-    `;
-    try {
-        await pool.query(queryTabela);
-        console.log("💾 [RENDER-POSTGRES] Tabela 'usuarios_galaxy' verificada e ativa!");
-    } catch (erro) {
-        console.error("❌ [RENDER-POSTGRES] Erro ao criar ou ler a tabela:", erro);
-    }
-};
+// Liga o banco de dados antes de iniciar o servidor multiplayer
+database.conectarBanco();
 
-// Ativa o banco assim que o Render liga o seu script
-inicializarBanco();
+const server = new WebSocket.Server({ port: PORT });
+console.log(`🚀 [Reduto RP] Servidor rodando perfeitamente na porta ${PORT}`);
 
-// 🔍 BUSCAR JOGADOR (Login e Registro)
-const buscarUsuarioNaNuvem = async (username) => {
-    if (!username) return null;
-    try {
-        const nomeLimpo = String(username).trim();
-        const resultado = await pool.query(
-            "SELECT id, username, password, last_pos FROM usuarios_galaxy WHERE LOWER(username) = LOWER($1);",
-            [nomeLimpo]
-        );
-        
-        if (resultado.rows.length > 0) {
-            const usuario = resultado.rows[0];
-            
-            let posicaoArray = [0, 2, 0];
-            try {
-                if (usuario.last_pos) {
-                    posicaoArray = typeof usuario.last_pos === 'string' ? JSON.parse(usuario.last_pos) : usuario.last_pos;
+server.on('connection', (socket) => {
+    console.log('🔌 [Multiplayer] Um jogador acabou de conectar ao Render!');
+
+    socket.on('message', async (data) => {
+        try {
+            const msg = JSON.parse(data);
+            const { comando, username, password, posicao } = msg;
+
+            // 📝 SISTEMA DE REGISTRO
+            if (comando === 'registrar') {
+                if (!username || !password) {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Campos inválidos!' }));
+                    return;
                 }
-            } catch (e) {
-                posicaoArray = [0, 2, 0];
+                try {
+                    await database.registrarJogador(username, password);
+                    console.log(`📝 [Sucesso] Nova conta criada para: ${username}`);
+                    socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
+                } catch (err) {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Essa conta já existe no Reduto!' }));
+                }
             }
 
-            return {
-                id: String(usuario.id),
-                username: String(usuario.username),
-                password: String(usuario.password),
-                last_pos: posicaoArray
-            };
+            // 🔑 SISTEMA DE LOGIN COM ID E SENHA
+            else if (comando === 'logar') {
+                const conta = await database.buscarJogador(username);
+
+                if (conta && conta.password === password) {
+                    console.log(`🔓 [Acesso] Cidadão liberado: ${username}`);
+                    
+                    // Envia de volta para a Godot os dados limpos para a HUD e o Spawn
+                    socket.send(JSON.stringify({
+                        status: 'logado_com_sucesso',
+                        id_oficial: conta.id_oficial,
+                        nome_oficial: conta.username,
+                        posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
+                    }));
+                } else {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Usuário ou senha incorretos!' }));
+                }
+            }
+
+            // 📍 SISTEMA MULTIPLAYER DE POSIÇÃO
+            else if (comando === 'salvar_posicao') {
+                if (username && posicao && posicao.length === 3) {
+                    await database.salvarPosicaoJogador(username, posicao);
+                }
+            }
+
+        } catch (erro) {
+            console.error('❌ [Erro Interno]:', erro);
         }
-        return null;
-    } catch (erro) {
-        console.error(`❌ [RENDER-BANCO] Erro ao buscar usuario (${username}):`, erro);
-        return null;
-    }
-};
+    });
 
-// 💾 SALVAR JOGADOR (Registro e Salvar Posição)
-const salvarUsuarioNaNuvem = async (jogador) => {
-    if (!jogador || !jogador.username) return false;
-    try {
-        const idLimpo = String(jogador.id).trim();
-        const nomeLimpo = String(jogador.username).trim();
-        const senhaLimpa = String(jogador.password).trim();
-        const posicaoTexto = JSON.stringify(jogador.last_pos || [0, 2, 0]);
-
-        const queryUpsert = `
-            INSERT INTO usuarios_galaxy (id, username, password, last_pos)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (username) 
-            DO UPDATE SET last_pos = EXCLUDED.last_pos;
-        `;
-
-        await pool.query(queryUpsert, [idLimpo, nomeLimpo, senhaLimpa, posicaoTexto]);
-        return true;
-    } catch (erro) {
-        console.error(`❌ [RENDER-BANCO] Erro ao salvar dados de ${jogador.username}:`, erro);
-        return false;
-    }
-};
-
-module.exports = {
-    buscarUsuarioNaNuvem,
-    salvarUsuarioNaNuvem
-};
+    socket.on('close', () => {
+        console.log('❌ [Multiplayer] Um jogador saiu da cidade.');
+    });
+});
