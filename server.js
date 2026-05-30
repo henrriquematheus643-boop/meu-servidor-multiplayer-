@@ -1,148 +1,96 @@
 const WebSocket = require('ws');
-const database = require('./database.js');
+const { Client } = require('pg');
 
-// 🚀 O Render define a porta automaticamente. Se não achar, usa a 10000.
-const PORTA = process.env.PORT || 10000;
-const wss = new WebSocket.Server({ port: PORTA });
+const PORT = process.env.PORT || 8080;
+// O link do Supabase você vai colar lá nas variáveis do Render com o nome DATABASE_URL
+const connectionString = process.env.DATABASE_URL; 
 
-console.log(`🚀 [SERVIDOR RENDER] Reduto RP online e escutando na porta ${PORTA}`);
+const db = new Client({ connectionString });
 
-// Guarda todos os jogadores ativos no mapa em tempo real
-let clientesAtivos = new Map();
+db.connect()
+    .then(() => console.log("💾 [Armazenamento] Conectado com sucesso ao Supabase!"))
+    .catch(err => console.error("❌ [Erro] Falha ao conectar no armazenamento:", err));
 
-wss.on('connection', (ws) => {
-    let meuIdNoServidor = null;
-    let meuNomeNoServidor = null;
-    
-    console.log("🔌 [CONEXÃO] Um jogador se conectou via WebSocket ao Render!");
+const server = new WebSocket.Server({ port: PORT });
+console.log(`🚀 [Reduto RP] Servidor Multiplayer ativo na porta ${PORT}`);
 
-    ws.on('message', async (mensagem) => {
+// Lista para controlar os jogadores que estão online no mapa agora
+const jogadoresOnline = {};
+
+server.on('connection', (socket) => {
+    console.log('🔌 Um novo cidadão conectou ao servidor!');
+
+    socket.on('message', async (data) => {
         try {
-            const dados = JSON.parse(mensagem);
-            
-            // 📝 1. COMANDO DE REGISTRAR CONTA
-            if (dados.comando === "registrar") {
-                console.log(`🔄 [REGISTRO] Verificando nome no banco do Render: ${dados.username}`);
-                
+            const msg = JSON.parse(data);
+            const { comando, username, password, posicao } = msg;
+
+            // 📝 COMANDO DE REGISTRAR CONTA
+            if (comando === 'registrar') {
+                if (!username || !password) {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Dados inválidos!' }));
+                    return;
+                }
                 try {
-                    const usuarioExiste = await database.buscarUsuarioNaNuvem(dados.username);
+                    // Cria o ID único que vai aparecer na HUD do jogador
+                    const id_oficial = 'ID_' + Math.floor(1000 + Math.random() * 9000);
                     
-                    if (usuarioExiste) {
-                        ws.send(JSON.stringify({ status: "erro", msg: "Esse nome ja esta em uso na cidade!" }));
-                        console.log(`⚠️ [REGISTRO] Nome recusado (ja existe): ${dados.username}`);
-                    } else {
-                        const novoJogador = {
-                            username: dados.username,
-                            password: dados.password,
-                            id: Math.floor(Math.random() * 90000) + 10000,
-                            last_pos: [0, 2, 0]
-                        };
-                        
-                        const salvoComSucesso = await database.salvarUsuarioNaNuvem(novoJogador);
-                        
-                        if (salvoComSucesso) {
-                            ws.send(JSON.stringify({ status: "registrado_com_sucesso" }));
-                            console.log(`✅ [BANCO] Nova conta criada para: ${dados.username}`);
-                        } else {
-                            ws.send(JSON.stringify({ status: "erro", msg: "Erro do banco ao salvar dados!" }));
-                        }
-                    }
-                } catch (erroBanco) {
-                    console.error("❌ [CRÍTICO] Erro no database.js no Render:", erroBanco);
-                    ws.send(JSON.stringify({ status: "erro", msg: "O banco de dados do Render nao respondeu!" }));
-                }
-                return;
-            }
-
-            // 🔑 2. COMANDO DE LOGAR CONTA
-            if (dados.comando === "logar") {
-                console.log(`🔄 [LOGIN] Verificando credenciais de: ${dados.username}`);
-                try {
-                    const resultadoBanco = await database.buscarUsuarioNaNuvem(dados.username);
+                    await db.query(
+                        'INSERT INTO jogadores (username, password, id_oficial, pos_x, pos_y, pos_z) VALUES ($1, $2, $3, 0, 0, 0)',
+                        [username, password, id_oficial]
+                    );
                     
-                    if (resultadoBanco && String(resultadoBanco.password) === String(dados.password)) {
-                        meuIdNoServidor = String(resultadoBanco.id);
-                        meuNomeNoServidor = resultadoBanco.username;
-                        
-                        ws.send(JSON.stringify({ 
-                            status: "logado_com_sucesso", 
-                            id_oficial: meuIdNoServidor,
-                            nome_oficial: meuNomeNoServidor,
-                            posicao: resultadoBanco.last_pos 
-                        }));
-                        console.log(`🔓 [BANCO] Login aprovado para: ${dados.username}`);
-                    } else {
-                        ws.send(JSON.stringify({ status: "erro", msg: "Senha incorreta ou usuario nao existe!" }));
-                        console.log(`❌ [BANCO] Negado ou nao encontrado: ${dados.username}`);
-                    }
-                } catch (erroBanco) {
-                    console.error("❌ [CRÍTICO] Erro ao buscar login no Render:", erroBanco);
-                    ws.send(JSON.stringify({ status: "erro", msg: "Erro interno no banco do Render!" }));
+                    console.log(`✅ [Cadastro] ${username} salvo no banco de dados!`);
+                    socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
+                } catch (err) {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Essa conta já existe, zagueirão!' }));
                 }
-                return;
             }
 
-            // 🌐 3. CONEXÃO MULTIPLAYER (ENTRADA NO MUNDO)
-            if (dados.action === "login") {
-                meuIdNoServidor = String(dados.id);
-                meuNomeNoServidor = dados.username;
-                clientesAtivos.set(meuIdNoServidor, ws);
-                
-                transmitirParaTodos({
-                    action: "login",
-                    id: meuIdNoServidor,
-                    username: meuNomeNoServidor
-                });
-                console.log(`🎮 [MULTIPLAYER] ${meuNomeNoServidor} entrou no mundo 3D.`);
-                return;
-            }
+            // 🔑 COMANDO DE LOGAR NA CONTA
+            else if (comando === 'logar') {
+                const res = await db.query('SELECT * FROM jogadores WHERE username = $1', [username]);
+                const conta = res.rows[0];
 
-            // 📍 4. MOVIMENTO EM TEMPO REAL
-            if (dados.action === "posicao") {
-                transmitirParaTodos({
-                    action: "posicao",
-                    id: dados.id,
-                    pos: dados.pos,
-                    rot: dados.rot
-                });
-                return;
-            }
+                if (conta && conta.password === password) {
+                    console.log(`🔓 [Login] ${username} entrou na cidade.`);
+                    
+                    // Guarda o socket do jogador para o sistema multiplayer saber quem ele é
+                    socket.username = username;
+                    jogadoresOnline[username] = socket;
 
-            // 💾 5. SALVAR POSIÇÃO
-            if (dados.comando === "salvar_posicao") {
-                var nome_alvo = dados.username || meuNomeNoServidor;
-                if (nome_alvo) {
-                    try {
-                        const jogador = await database.buscarUsuarioNaNuvem(nome_alvo);
-                        if (jogador) {
-                            jogador.last_pos = dados.posicao;
-                            await database.salvarUsuarioNaNuvem(jogador);
-                            console.log(`💾 [BANCO] Posicao de ${nome_alvo} salva no Render.`);
-                        }
-                    } catch (e) { }
+                    // Devolve o ID Único, o Nome e a Posição Salva para a Godot
+                    socket.send(JSON.stringify({
+                        status: 'logado_com_sucesso',
+                        id_oficial: conta.id_oficial,
+                        nome_oficial: conta.username,
+                        posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
+                    }));
+                } else {
+                    socket.send(JSON.stringify({ status: 'erro', msg: 'Usuário ou senha incorretos!' }));
                 }
-                return;
+            }
+
+            // 📍 COMANDO MULTIPLAYER: SALVAR POSIÇÃO EM TEMPO REAL
+            else if (comando === 'salvar_posicao') {
+                if (posicao && posicao.length === 3 && username) {
+                    // Atualiza as coordenadas [X, Y, Z] direto no site de armazenamento
+                    await db.query(
+                        'UPDATE jogadores SET pos_x = $1, pos_y = $2, pos_z = $3 WHERE username = $4',
+                        [posicao[0], posicao[1], posicao[2], username]
+                    );
+                }
             }
 
         } catch (erro) {
-            // Ignora dados corrompidos
+            console.error('❌ Erro ao processar dados:', erro);
         }
     });
 
-    ws.on('close', () => {
-        if (meuIdNoServidor) {
-            clientesAtivos.delete(meuIdNoServidor);
-            transmitirParaTodos({ action: "sair", id: meuIdNoServidor });
-            console.log(`❌ [MULTIPLAYER] Cidadao ID ${meuIdNoServidor} saiu.`);
+    socket.on('close', () => {
+        if (socket.username && jogadoresOnline[socket.username]) {
+            delete jogadoresOnline[socket.username];
+            console.log(`❌ Cidadão ${socket.username} desconectou.`);
         }
     });
 });
-
-function transmitirParaTodos(dados) {
-    const message = JSON.stringify(dados);
-    clientesAtivos.forEach((cliente) => {
-        if (cliente.readyState === WebSocket.OPEN) {
-            cliente.send(message);
-        }
-    });
-}
