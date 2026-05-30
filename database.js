@@ -1,70 +1,70 @@
-const WebSocket = require('ws');
-// Importa o sistema do banco de dados que estruturamos
-const database = require('./database');
+const { Client } = require('pg');
 
-const PORT = process.env.PORT || 8080;
+// Pega o link oficial do banco que você colocou no painel do Render
+const linkBanco = process.env.DATABASE_URL;
 
-// Liga o banco de dados antes de iniciar o servidor multiplayer
-database.conectarBanco();
-
-const server = new WebSocket.Server({ port: PORT });
-console.log(`🚀 [Reduto RP] Servidor rodando perfeitamente na porta ${PORT}`);
-
-server.on('connection', (socket) => {
-    console.log('🔌 [Multiplayer] Um jogador acabou de conectar ao Render!');
-
-    socket.on('message', async (data) => {
-        try {
-            const msg = JSON.parse(data);
-            const { comando, username, password, posicao } = msg;
-
-            // 📝 SISTEMA DE REGISTRO
-            if (comando === 'registrar') {
-                if (!username || !password) {
-                    socket.send(JSON.stringify({ status: 'erro', msg: 'Campos inválidos!' }));
-                    return;
-                }
-                try {
-                    await database.registrarJogador(username, password);
-                    console.log(`📝 [Sucesso] Nova conta criada para: ${username}`);
-                    socket.send(JSON.stringify({ status: 'registrado_com_sucesso' }));
-                } catch (err) {
-                    socket.send(JSON.stringify({ status: 'erro', msg: 'Essa conta já existe no Reduto!' }));
-                }
-            }
-
-            // 🔑 SISTEMA DE LOGIN COM ID E SENHA
-            else if (comando === 'logar') {
-                const conta = await database.buscarJogador(username);
-
-                if (conta && conta.password === password) {
-                    console.log(`🔓 [Acesso] Cidadão liberado: ${username}`);
-                    
-                    // Envia de volta para a Godot os dados limpos para a HUD e o Spawn
-                    socket.send(JSON.stringify({
-                        status: 'logado_com_sucesso',
-                        id_oficial: conta.id_oficial,
-                        nome_oficial: conta.username,
-                        posicao: [conta.pos_x, conta.pos_y, conta.pos_z]
-                    }));
-                } else {
-                    socket.send(JSON.stringify({ status: 'erro', msg: 'Usuário ou senha incorretos!' }));
-                }
-            }
-
-            // 📍 SISTEMA MULTIPLAYER DE POSIÇÃO
-            else if (comando === 'salvar_posicao') {
-                if (username && posicao && posicao.length === 3) {
-                    await database.salvarPosicaoJogador(username, posicao);
-                }
-            }
-
-        } catch (erro) {
-            console.error('❌ [Erro Interno]:', erro);
-        }
-    });
-
-    socket.on('close', () => {
-        console.log('❌ [Multiplayer] Um jogador saiu da cidade.');
-    });
+// Cria o cliente apontando ÚNICA e EXCLUSIVAMENTE para o link da nuvem
+const db = new Client({
+    connectionString: linkBanco,
+    ssl: {
+        rejectUnauthorized: false // Obrigatório para o Render aceitar o Supabase com segurança
+    }
 });
+
+// Inicializa a conexão de forma direta
+async function conectarBanco() {
+    if (!linkBanco) {
+        console.error("❌ [Database] ERRO: A variável DATABASE_URL está vazia no Render!");
+        return;
+    }
+    
+    try {
+        await db.connect();
+        console.log("💾 [Database] Conectado com sucesso ao banco de dados externo!");
+        
+        // Cria a tabela oficial do Reduto RP se ela não existir
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS jogadores (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(50) NOT NULL,
+                id_oficial VARCHAR(50) NOT NULL,
+                pos_x REAL DEFAULT 0,
+                pos_y REAL DEFAULT 0,
+                pos_z REAL DEFAULT 0
+            );
+        `);
+        console.log("📊 [Database] Tabela 'jogadores' pronta para o uso.");
+    } catch (erro) {
+        console.error("❌ [Database] Erro fatal na conexão:", erro.message);
+    }
+}
+
+// Salva nova conta com ID único de RP
+async function registrarJogador(username, password) {
+    const id_oficial = 'ID_' + Math.floor(1000 + Math.random() * 9000);
+    const comandoSQL = 'INSERT INTO jogadores(username, password, id_oficial) VALUES($1, $2, $3)';
+    await db.query(comandoSQL, [username, password, id_oficial]);
+    return { sucesso: true };
+}
+
+// Busca jogador para fazer o Login
+async function buscarJogador(username) {
+    const comandoSQL = 'SELECT * FROM jogadores WHERE username = $1';
+    const resultado = await db.query(comandoSQL, [username]);
+    return resultado.rows[0];
+}
+
+// Salva a posição 3D do boneco no mapa do jogo
+async function salvarPosicaoJogador(username, posicao) {
+    const comandoSQL = 'UPDATE jogadores SET pos_x = $1, pos_y = $2, pos_z = $3 WHERE username = $4';
+    await db.query(comandoSQL, [posicao[0], posicao[1], posicao[2], username]);
+}
+
+// Exporta o sistema limpo
+module.exports = {
+    conectarBanco,
+    registrarJogador,
+    buscarJogador,
+    salvarPosicaoJogador
+};
