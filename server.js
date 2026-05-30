@@ -1,99 +1,52 @@
 const WebSocket = require('ws');
+const wss = new WebSocket.Server({ port: process.env.PORT || 8080 });
 
-const PORT = process.env.PORT || 8080;
-const server = new WebSocket.Server({ port: PORT });
+console.log("🚀 Servidor Node.js rodando na porta 8080...");
 
-// Armazena as informações dos jogadores que estão online no mapa
-// Estrutura: "nome_do_jogador" => { socket, posicao: [x, y, z] }
-const jogadoresOnline = new Map();
+wss.on('connection', (ws) => {
+    console.log("👤 Novo cliente conectado!");
 
-console.log(`🚀 [Servidor Reduto RP] Iniciado com sucesso na porta ${PORT}`);
-
-server.on('connection', (socket) => {
-    let meuUsuario = null;
-    console.log("🔄 [Conexão] Um novo dispositivo se conectou ao WebSocket.");
-
-    socket.on('message', (data) => {
+    ws.on('message', (message) => {
         try {
-            const msg = JSON.parse(data.toString('utf8'));
-            const { comando, username, posicao } = msg;
+            const data = JSON.parse(message);
+            console.log("📥 Comando recebido do cliente:", data.comando);
 
-            // 🔑 LOGAR / ENTRAR NO MAPA
-            if (comando === 'logar') {
-                meuUsuario = username || "Jogador_" + Math.floor(1000 + Math.random() * 9000);
-                console.log(`🔓 [Login] ${meuUsuario} entrou no servidor online.`);
+            switch (data.comando) {
+                case 'log':
+                    // CONFIRMAÇÃO DO APERTO DE MÃO
+                    console.log("✅ [CONFIRMAÇÃO]: " + data.mensagem);
+                    ws.send(JSON.stringify({ status: "log_recebido", info: "Conexão confirmada" }));
+                    break;
 
-                // Salva o jogador na lista com a posição inicial padrão [0, 1, 0]
-                jogadoresOnline.set(meuUsuario, { socket: socket, posicao: [0.0, 1.0, 0.0] });
+                case 'logar':
+                    // Lógica de Login
+                    console.log("🔑 Tentativa de login para: " + data.username);
+                    ws.send(JSON.stringify({ 
+                        status: "logado_com_sucesso", 
+                        nome_oficial: data.username 
+                    }));
+                    break;
 
-                // 1. Responde para o próprio jogador que ele logou com sucesso
-                socket.send(JSON.stringify({
-                    status: "logado_com_sucesso",
-                    nome_oficial: meuUsuario
-                }));
-
-                // 2. Envia para o jogador que acabou de entrar a lista de todos os outros que já estavam lá
-                jogadoresOnline.forEach((dadosJogador, nomeJogador) => {
-                    if (nomeJogador !== meuUsuario) {
-                        socket.send(JSON.stringify({
-                            status: "player_nasceu",
-                            nome_oficial: nomeJogador,
-                            posicao: dadosJogador.posicao
-                        }));
-                    }
-                });
-
-                // 3. Avisa todos os outros jogadores da rede que um novo player nasceu
-                transmitirParaOutros(meuUsuario, {
-                    status: "player_nasceu",
-                    nome_oficial: meuUsuario,
-                    posicao: [0.0, 1.0, 0.0]
-                });
+                case 'salvar_posicao':
+                    // Reenvia para os outros clientes (sistema de broadcast)
+                    broadcast({
+                        status: "player_moveu",
+                        nome_oficial: data.username,
+                        posicao: data.posicao
+                    }, ws);
+                    break;
             }
-
-            // 🏃‍♂️ ATUALIZAR POSIÇÃO (MULTIPLAYER)
-            else if (comando === 'salvar_posicao') {
-                if (meuUsuario && posicao && posicao.length === 3) {
-                    const dados = jogadoresOnline.get(meuUsuario);
-                    if (dados) {
-                        dados.posicao = posicao; // Atualiza a posição na memória do servidor
-
-                        // Retransmite a nova posição para os outros jogadores verem o movimento
-                        transmitirParaOutros(meuUsuario, {
-                            status: "player_moveu",
-                            nome_oficial: meuUsuario,
-                            posicao: posicao
-                        });
-                    }
-                }
-            }
-
-        } catch (err) {
-            console.log("⚠️ [Erro] Falha ao processar pacote JSON recebido.");
-        }
-    });
-
-    // ❌ QUANDO O JOGADOR FECHA O JOGO OU DESCONECTA
-    socket.on('close', () => {
-        if (meuUsuario) {
-            console.log(`❌ [Desconexão] ${meuUsuario} saiu do jogo.`);
-            jogadoresOnline.delete(meuUsuario);
-
-            // Avisa os outros jogadores para removerem o clone desse player da tela
-            transmitirParaOutros(meuUsuario, {
-                status: "player_saiu",
-                nome_oficial: meuUsuario
-            });
+        } catch (e) {
+            console.error("❌ Erro ao processar mensagem:", e);
         }
     });
 });
 
-// Função auxiliar para enviar pacotes para todos os jogadores conectados, exceto quem enviou
-function transmitirParaOutros(remetente, dados) {
-    const dadosString = JSON.stringify(dados);
-    jogadoresOnline.forEach((dadosJogador, nomeJogador) => {
-        if (nomeJogador !== remetente && dadosJogador.socket.readyState === WebSocket.OPEN) {
-            dadosJogador.socket.send(dadosString);
+// Função para enviar para todos, menos para quem enviou
+function broadcast(data, senderWs) {
+    wss.clients.forEach((client) => {
+        if (client !== senderWs && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(data));
         }
     });
 }
